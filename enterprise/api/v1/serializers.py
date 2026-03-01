@@ -17,6 +17,8 @@ from slumber.exceptions import HttpClientError
 from django.contrib import auth
 from django.contrib.sites.models import Site
 from django.core import exceptions as django_exceptions
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.validators import validate_email
 from django.db import IntegrityError, transaction
 from django.utils.translation import gettext_lazy as _
 
@@ -2375,3 +2377,81 @@ class EnterpriseSSOUserInfoRequestSerializer(serializers.Serializer):
     """
     org_id = serializers.CharField(required=True)
     external_user_id = serializers.CharField(required=True)
+
+
+class EnterpriseAdminMemberSerializer(serializers.Serializer):
+    """
+    Response serializer for enterprise admin members.
+    """
+    id = serializers.IntegerField(source='admin_id')
+    name = serializers.CharField(allow_null=True, required=False)
+    email = serializers.EmailField()
+    invited_date = serializers.DateTimeField(
+        allow_null=True,
+        required=False,
+        format="%b %d, %Y",
+    )
+    joined_date = serializers.DateTimeField(
+        allow_null=True,
+        required=False,
+        format="%b %d, %Y",
+    )
+    status = serializers.CharField()
+
+
+class AdminInviteSerializer(serializers.Serializer):
+    """
+    Accepts a list of email addresses for processing:
+    Example:
+    {
+        "emails": ["a@x.com", "b@x.com"]
+    }
+
+    Validation:
+    - Emails are validated for proper format.
+    - Emails are stripped and lowercased.
+    - Empty lists are not allowed.
+    - Duplicate emails are not allowed.
+    - (Optional) Additional business rules such as domain restrictions can be applied.
+    """
+    emails = serializers.ListField(
+        child=serializers.EmailField(),
+        allow_empty=False,
+        required=True,
+        error_messages={
+            "required": "The 'emails' field is required.",
+        },
+    )
+
+    def validate_emails(self, value):
+        """
+        Validate email format and check for duplicates.
+
+        Args:
+            value: List of email strings
+
+        Returns:
+            List of normalized (stripped, lowercased) emails
+
+        Raises:
+            ValidationError: If any email has invalid format or duplicates exist
+        """
+        normalized_emails = []
+
+        for email in value:
+            # Strip and lowercase
+            normalized_email = email.strip().lower()
+
+            # Validate email format
+            try:
+                validate_email(normalized_email)
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError(f"Invalid email format: {email}") from exc
+
+            normalized_emails.append(normalized_email)
+
+        # Check for duplicates
+        if len(normalized_emails) != len(set(normalized_emails)):
+            raise serializers.ValidationError("Duplicate emails are not allowed.")
+
+        return normalized_emails

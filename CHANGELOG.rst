@@ -17,6 +17,15 @@ Unreleased
 ----------
 * nothing unreleased
 
+[6.6.6] - 2026-03-01
+---------------------
+* feat: add enterprise admin invite endpoint with Braze integration
+
+[6.6.5] - 2026-02-24
+---------------------
+* build: remove pinned pip now that pip-tools supports pip 26.0
+* chore: upgrade python requirements
+
 [6.6.4] - 2026-02-04
 ---------------------
 * build: upgrade python deps, pin pylint<4

@@ -1,7 +1,6 @@
 """
 Django tasks.
 """
-
 from logging import getLogger
 
 from celery import shared_task
@@ -14,6 +13,7 @@ from django.db import IntegrityError
 
 from enterprise import constants
 from enterprise.api_client.braze import ENTERPRISE_BRAZE_ALIAS_LABEL, MAX_NUM_IDENTIFY_USERS_ALIASES, BrazeAPIClient
+from enterprise.api_client.braze_client import BrazeAPIClient as braze_client_module
 from enterprise.api_client.enterprise_catalog import EnterpriseCatalogApiClient
 from enterprise.constants import SSO_BRAZE_CAMPAIGN_ID
 from enterprise.utils import batch_dict, get_enterprise_customer, localized_utcnow, send_email_notification_message
@@ -153,6 +153,7 @@ def enterprise_group_membership_model():
 def enterprise_course_enrollment_model():
     """
     Returns the ``EnterpriseCourseEnrollment`` class.
+
     This function is needed to avoid circular ref issues when model classes call tasks in this module.
     """
     return apps.get_model('enterprise', 'EnterpriseCourseEnrollment')
@@ -192,6 +193,7 @@ def send_sso_configured_email(
     }
 
     try:
+        # Assuming recipient and alias creation logic remains the same
         braze_client_instance = BrazeAPIClient()
         recipient = braze_client_instance.create_recipient_no_external_id(
             contact_email,
@@ -436,3 +438,81 @@ def send_group_membership_removal_notification(enterprise_customer_uuid, members
             errored_at=localized_utcnow())
         LOGGER.exception(message)
         raise exc
+
+
+@shared_task(bind=True, max_retries=3)
+@set_code_owner_attribute
+def send_enterprise_admin_invite_email(
+    self,
+    enterprise_customer_uuid,
+    recipient_emails,
+):
+    """
+    Send invitation emails to new enterprise admins using Braze.
+
+    Args:
+        self: Celery task instance (required for retry)
+        enterprise_customer_uuid (UUID): The UUID of the enterprise customer.
+        recipient_emails (list or str): Email(s) of the recipients to invite as admins.
+
+    This task constructs the required Braze campaign properties and triggers the
+    Braze campaign to send admin invite emails. If a single email is provided,
+    it is converted to a list. The campaign ID and Braze API credentials are
+    fetched from Django settings.
+
+    Retries:
+        - Maximum 3 retries with exponential backoff
+        - Retry delays: 60s, 120s, 240s
+
+    Raises:
+        BrazeClientError: If Braze API fails after all retries
+    """
+
+    enterprise_customer = get_enterprise_customer(enterprise_customer_uuid)
+    enterprise_slug = enterprise_customer.slug
+    enterprise_name = enterprise_customer.name
+    sender_alias = enterprise_customer.sender_alias
+    if not isinstance(recipient_emails, list):
+        recipient_emails = [recipient_emails]
+
+    # braze_campaign_id = settings.BRAZE_GROUPS_EMAIL_AUTO_REMINDER_DAY_5_CAMPAIGN
+    braze_trigger_properties = {
+        'customer-slug': enterprise_slug,
+        'enterprise_customer_name': enterprise_name,
+        'enterprise_sender_alias': sender_alias,
+        'enterprise_contact_email': ",".join(recipient_emails),
+    }
+
+    try:
+        braze_client_instance = braze_client_module(
+            api_key=getattr(settings, 'ENTERPRISE_BRAZE_API_KEY', None),
+            api_url=getattr(settings, 'EDX_BRAZE_API_SERVER', None)
+        )
+        message = f"Sending enterprise admin invite email to {recipient_emails} for enterprise {enterprise_name}."
+        LOGGER.info(message)
+        braze_campaign_id = getattr(settings, 'BRAZE_ENTERPRISE_ADMIN_INVITE_EMAIL_CAMPAIGN_ID', None)
+        braze_client_instance.send_campaign_message(
+            braze_campaign_id,
+            recipients=recipient_emails,
+            trigger_properties=braze_trigger_properties,
+        )
+        LOGGER.info(
+            f"Successfully sent admin invite email to {recipient_emails} for enterprise {enterprise_slug}"
+        )
+    except BrazeClientError as exc:  # pylint: disable=broad-exception-caught
+        message = (
+            f'Failed to send enterprise admin invite email to {recipient_emails} '
+            f'for enterprise: {enterprise_name}. '
+            f'Retry attempt {self.request.retries} of {self.max_retries}.'
+        )
+        LOGGER.exception(message)
+
+        # Retry with exponential backoff: 60s, 120s, 240s
+        try:
+            raise self.retry(exc=exc, countdown=60 * (2 ** self.request.retries))
+        except self.MaxRetriesExceededError:
+            LOGGER.exception(
+                f"Max retries exceeded for admin invite email to {recipient_emails} "
+                f"for enterprise {enterprise_name}"
+            )
+            raise exc from exc

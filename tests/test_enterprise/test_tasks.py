@@ -16,6 +16,7 @@ from enterprise.models import EnterpriseCourseEnrollment, EnterpriseEnrollmentSo
 from enterprise.settings.test import BRAZE_GROUPS_INVITATION_EMAIL_CAMPAIGN_ID, BRAZE_GROUPS_REMOVAL_EMAIL_CAMPAIGN_ID
 from enterprise.tasks import (
     create_enterprise_enrollment,
+    send_enterprise_admin_invite_email,
     send_enterprise_email_notification,
     send_group_membership_invitation_notification,
     send_group_membership_removal_notification,
@@ -59,6 +60,56 @@ class TestEnterpriseTasks(unittest.TestCase):
             enterprise_customer=self.enterprise_customer,
         )
         super().setUp()
+
+    @mock.patch('enterprise.tasks.braze_client_module')
+    @mock.patch('enterprise.tasks.get_enterprise_customer')
+    @mock.patch('enterprise.tasks.LOGGER')
+    def test_send_enterprise_admin_invite_email_success(self, mock_logger, mock_get_customer, mock_braze_client):
+        """
+        Test send_enterprise_admin_invite_email sends campaign message successfully.
+        """
+        mock_customer = mock.Mock()
+        mock_customer.slug = 'slug'
+        mock_customer.name = 'name'
+        mock_customer.sender_alias = 'alias'
+        mock_get_customer.return_value = mock_customer
+        mock_braze_instance = mock.Mock()
+        mock_braze_client.return_value = mock_braze_instance
+        mock_braze_instance.send_campaign_message.return_value = None
+        send_enterprise_admin_invite_email(  # pylint: disable=no-value-for-parameter
+            'uuid', 'admin@example.com'
+        )
+        mock_logger.info.assert_called()
+        mock_braze_instance.send_campaign_message.assert_called_once()
+
+    @mock.patch('enterprise.tasks.braze_client_module')
+    @mock.patch('enterprise.tasks.get_enterprise_customer')
+    @mock.patch('enterprise.tasks.LOGGER')
+    def test_send_enterprise_admin_invite_email_braze_error(self, mock_logger, mock_get_customer, mock_braze_client):
+        """
+        Test send_enterprise_admin_invite_email logs and raises BrazeClientError.
+        """
+        mock_customer = mock.Mock()
+        mock_customer.slug = 'slug'
+        mock_customer.name = 'name'
+        mock_customer.sender_alias = 'alias'
+        mock_get_customer.return_value = mock_customer
+        mock_braze_instance = mock.Mock()
+        mock_braze_client.return_value = mock_braze_instance
+        mock_braze_instance.send_campaign_message.side_effect = BrazeClientError('fail')
+
+        # Mock the task's request object for retry mechanism
+        task = send_enterprise_admin_invite_email
+        task.request.retries = 0
+        task.max_retries = 3
+
+        # Mock retry to raise MaxRetriesExceededError
+        with mock.patch.object(task, 'retry', side_effect=task.MaxRetriesExceededError()):
+            with self.assertRaises(BrazeClientError):
+                task('uuid', 'admin@example.com')  # pylint: disable=no-value-for-parameter
+
+        # Verify exception was logged (called at least once)
+        assert mock_logger.exception.called
 
     @mock.patch('enterprise.models.EnterpriseCustomer.catalog_contains_course')
     def test_create_enrollment_task_course_in_catalog(self, mock_contains_course):

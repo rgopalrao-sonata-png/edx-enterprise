@@ -243,6 +243,11 @@ urlpatterns = [
         ),
         name='enterprise-course-enrollment-admin'
     ),
+    re_path(
+        r'^enterprise-customer-admin/(?P<enterprise_customer_uuid>[A-Za-z0-9-]+)/admins/invite/$',
+        EnterpriseCustomerAdminViewSet.as_view({'post': 'invite_admins'}),
+        name='enterprise-customer-admin-invite'
+    )
 ]
 
 urlpatterns += router.urls
