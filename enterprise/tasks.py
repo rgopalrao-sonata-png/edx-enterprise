@@ -483,21 +483,46 @@ def send_enterprise_admin_invite_email(
         'enterprise_contact_email': ",".join(recipient_emails),
     }
 
+    # Validate required settings exist
+    api_key = getattr(settings, 'ENTERPRISE_BRAZE_API_KEY', None)
+    api_url = getattr(settings, 'EDX_BRAZE_API_SERVER', None)
+    braze_campaign_id = getattr(settings, 'BRAZE_ENTERPRISE_ADMIN_INVITE_EMAIL_CAMPAIGN_ID', None)
+
+    if not api_key or not api_url:
+        error_msg = (
+            f"Missing required Braze settings for admin invite email to {recipient_emails}. "
+            f"ENTERPRISE_BRAZE_API_KEY: {bool(api_key)}, EDX_BRAZE_API_SERVER: {bool(api_url)}"
+        )
+        LOGGER.error(error_msg)
+        raise ValueError(error_msg)
+
+    if not braze_campaign_id:
+        error_msg = (
+            f"Missing BRAZE_ENTERPRISE_ADMIN_INVITE_EMAIL_CAMPAIGN_ID setting "
+            f"for admin invite email to {recipient_emails}"
+        )
+        LOGGER.error(error_msg)
+        raise ValueError(error_msg)
+
     try:
         braze_client_instance = braze_client_module(
-            api_key=getattr(settings, 'ENTERPRISE_BRAZE_API_KEY', None),
-            api_url=getattr(settings, 'EDX_BRAZE_API_SERVER', None)
+            api_key=api_key,
+            api_url=api_url
         )
-        message = f"Sending enterprise admin invite email to {recipient_emails} for enterprise {enterprise_name}."
-        LOGGER.info(message)
-        braze_campaign_id = getattr(settings, 'BRAZE_ENTERPRISE_ADMIN_INVITE_EMAIL_CAMPAIGN_ID', None)
+        LOGGER.info(
+            "Sending enterprise admin invite email to %s for enterprise %s.",
+            recipient_emails,
+            enterprise_name
+        )
         braze_client_instance.send_campaign_message(
             braze_campaign_id,
             recipients=recipient_emails,
             trigger_properties=braze_trigger_properties,
         )
         LOGGER.info(
-            f"Successfully sent admin invite email to {recipient_emails} for enterprise {enterprise_slug}"
+            "Successfully sent admin invite email to %s for enterprise %s",
+            recipient_emails,
+            enterprise_slug
         )
     except BrazeClientError as exc:  # pylint: disable=broad-exception-caught
         message = (
@@ -512,7 +537,8 @@ def send_enterprise_admin_invite_email(
             raise self.retry(exc=exc, countdown=60 * (2 ** self.request.retries))
         except self.MaxRetriesExceededError:
             LOGGER.exception(
-                f"Max retries exceeded for admin invite email to {recipient_emails} "
-                f"for enterprise {enterprise_name}"
+                "Max retries exceeded for admin invite email to %s for enterprise %s",
+                recipient_emails,
+                enterprise_name
             )
             raise exc from exc
