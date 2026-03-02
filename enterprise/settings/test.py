@@ -381,11 +381,16 @@ ENTERPRISE_SSO_ORCHESTRATOR_BASE_URL = 'https://foobar.com'
 ENTERPRISE_SSO_ORCHESTRATOR_CONFIGURE_PATH = 'configure'
 ENTERPRISE_SSO_ORCHESTRATOR_CONFIGURE_EDX_OAUTH_PATH = 'configure-edx-oauth'
 
-ENTERPRISE_BRAZE_API_KEY = 'test-api-key'
-EDX_BRAZE_API_SERVER = 'test-api-server'
+# Braze Configuration - Update these with your actual values
+ENTERPRISE_BRAZE_API_KEY = os.environ.get('ENTERPRISE_BRAZE_API_KEY', 'test-api-key')
+EDX_BRAZE_API_SERVER = os.environ.get('EDX_BRAZE_API_SERVER', 'test-api-server')
 BRAZE_GROUPS_INVITATION_EMAIL_CAMPAIGN_ID = 'test-invitation-campaign-id'
 BRAZE_GROUPS_REMOVAL_EMAIL_CAMPAIGN_ID = 'test-removal-campaign-id'
-BRAZE_ENTERPRISE_ADMIN_INVITE_EMAIL_CAMPAIGN_ID = 'test-admin-invite-campaign-id'
+BRAZE_ENTERPRISE_ADMIN_INVITE_EMAIL_CAMPAIGN_ID = os.environ.get(
+    'BRAZE_ENTERPRISE_ADMIN_INVITE_EMAIL_CAMPAIGN_ID',
+    '78a9d9be-daf8-4ace-ae6c-c0e79548f009'  # Your campaign ID
+)
+
 
 STORAGES = {
     'default': {

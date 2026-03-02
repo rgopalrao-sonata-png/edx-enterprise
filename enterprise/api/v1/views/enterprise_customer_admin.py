@@ -169,6 +169,10 @@ class EnterpriseCustomerAdminViewSet(
         serializer = self.get_serializer(admin)
         return Response(serializer.data, status=response_status_code)
 
+    @permission_required(
+        ENTERPRISE_CUSTOMER_PROVISIONING_ADMIN_ACCESS_PERMISSION,
+        fn=lambda request, *args, **kwargs: kwargs.get('customer_id'),
+    )
     @action(
         detail=False,
         methods=['delete'],
@@ -207,6 +211,7 @@ class EnterpriseCustomerAdminViewSet(
                     id=customer_id
                 )
                 enterprise_customer = pending_admin.enterprise_customer
+                user_email = pending_admin.user_email
 
                 pending_admin.delete()
                 logger.info(
@@ -214,10 +219,13 @@ class EnterpriseCustomerAdminViewSet(
                     customer_id,
                     enterprise_customer.uuid
                 )
-                return Response(status=status.HTTP_204_NO_CONTENT)
+                return Response(
+                    {'message': f'Pending admin invitation for {user_email} deleted successfully'},
+                    status=status.HTTP_200_OK
+                )
             except models.PendingEnterpriseCustomerAdminUser.DoesNotExist:
                 return Response(
-                    {'error': f'PendingEnterpriseCustomerAdminUser with id {customer_id} does not exist'},
+                    {'error': 'Pending admin invitation not found'},
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
@@ -227,7 +235,7 @@ class EnterpriseCustomerAdminViewSet(
                 enterprise_customer_user = models.EnterpriseCustomerUser.objects.get(id=customer_id)
             except models.EnterpriseCustomerUser.DoesNotExist:
                 return Response(
-                    {'error': f'EnterpriseCustomerUser with id {customer_id} does not exist'},
+                    {'error': 'Admin user not found'},
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
@@ -238,12 +246,7 @@ class EnterpriseCustomerAdminViewSet(
                 enterprise_customer_user=enterprise_customer_user
             ).exists():
                 return Response(
-                    {
-                        'error': (
-                            f'EnterpriseCustomerAdmin for enterprise_customer_user_id '
-                            f'{customer_id} does not exist'
-                        )
-                    },
+                    {'error': 'Admin record not found'},
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
@@ -259,12 +262,7 @@ class EnterpriseCustomerAdminViewSet(
 
             if not role_assignment.exists():
                 return Response(
-                    {
-                        'error': (
-                            f'Admin role assignment does not exist for user {user.id} '
-                            f'in enterprise {enterprise_customer.uuid}'
-                        )
-                    },
+                    {'error': 'Admin role assignment not found'},
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
@@ -301,7 +299,20 @@ class EnterpriseCustomerAdminViewSet(
                     user.id
                 )
 
-            return Response(status=status.HTTP_200_OK)
+            # Create a meaningful message with email
+            user_identifier = user.email or user.username
+            if not has_other_roles:
+                message = f'Admin {user_identifier} deleted successfully and user account deactivated'
+            else:
+                message = f'Admin {user_identifier} deleted successfully'
+
+            return Response(
+                {
+                    'message': message,
+                    'user_deactivated': not has_other_roles
+                },
+                status=status.HTTP_200_OK
+            )
 
         else:
             return Response(

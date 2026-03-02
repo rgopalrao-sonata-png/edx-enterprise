@@ -391,6 +391,11 @@ class TestDeleteAdminEndpoint(APITest):
         response = self.client.delete(f'{self.delete_url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('message', response.data)
+        self.assertIn('admin-target@example.com', response.data['message'])
+        self.assertIn('deleted successfully and user account deactivated', response.data['message'])
+        self.assertIn('user_deactivated', response.data)
+        self.assertTrue(response.data['user_deactivated'])
 
         # ECA record still exists in DB
         admin = EnterpriseCustomerAdmin.objects.get(pk=self.admin.pk)
@@ -473,7 +478,14 @@ class TestDeleteAdminEndpoint(APITest):
             ).exclude(role__name=ENTERPRISE_ADMIN_ROLE).exists()
         )
 
-        self.client.delete(f'{self.delete_url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
+        response = self.client.delete(f'{self.delete_url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
+
+        # Verify response
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('message', response.data)
+        self.assertIn('admin-target@example.com', response.data['message'])
+        self.assertIn('deleted successfully', response.data['message'])
+        self.assertFalse(response.data['user_deactivated'])
 
         # ECU should remain active because learner role still exists
         self.enterprise_customer_user.refresh_from_db()
@@ -500,7 +512,13 @@ class TestDeleteAdminEndpoint(APITest):
             ).exclude(role__name=ENTERPRISE_ADMIN_ROLE).exists()
         )
 
-        self.client.delete(f'{self.delete_url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
+        response = self.client.delete(f'{self.delete_url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
+
+        # Verify response
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('message', response.data)
+        self.assertIn('user_deactivated', response.data)
+        self.assertTrue(response.data['user_deactivated'])
 
         # ECU should be deactivated
         self.enterprise_customer_user.refresh_from_db()
@@ -616,7 +634,7 @@ class TestDeleteAdminEndpoint(APITest):
         response = self.client.delete(f'{self.delete_url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        self.assertIn('Admin role assignment does not exist', response.data['error'])
+        self.assertIn('Admin role assignment not found', response.data['error'])
 
     def test_delete_admin_case_insensitive_role(self):
         """
@@ -633,6 +651,10 @@ class TestDeleteAdminEndpoint(APITest):
         response = self.client.delete(f'{self.delete_url}?role=ADMIN')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('message', response.data)
+        self.assertIn('admin-target@example.com', response.data['message'])
+        self.assertIn('deleted successfully and user account deactivated', response.data['message'])
+        self.assertTrue(response.data['user_deactivated'])
 
         # Verify admin role was removed
         self.assertFalse(
@@ -666,7 +688,11 @@ class TestDeleteAdminEndpoint(APITest):
 
         response = self.client.delete(f'{url}?role={PENDING_ADMIN_ROLE_TYPE}')
 
-        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('message', response.data)
+        self.assertIn('pending@example.com', response.data['message'])
+        self.assertIn('Pending admin invitation', response.data['message'])
+        self.assertIn('deleted successfully', response.data['message'])
 
         # Verify the pending admin was actually deleted
         self.assertFalse(
@@ -690,7 +716,7 @@ class TestDeleteAdminEndpoint(APITest):
         response = self.client.delete(f'{url}?role={PENDING_ADMIN_ROLE_TYPE}')
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        self.assertIn('PendingEnterpriseCustomerAdminUser', response.data['error'])
+        self.assertIn('Pending admin invitation not found', response.data['error'])
 
     def test_delete_pending_admin_wrong_enterprise(self):
         """
@@ -715,7 +741,10 @@ class TestDeleteAdminEndpoint(APITest):
         response = self.client.delete(f'{url}?role={PENDING_ADMIN_ROLE_TYPE}')
 
         # Should succeed - pending admin ID is unique across all enterprises
-        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('message', response.data)
+        self.assertIn('other@example.com', response.data['message'])
+        self.assertIn('deleted successfully', response.data['message'])
 
     def test_delete_pending_admin_permission_required(self):
         """
@@ -786,7 +815,11 @@ class TestDeleteAdminEndpoint(APITest):
 
         response = self.client.delete(f'{url}?role=PENDING')
 
-        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('message', response.data)
+        self.assertIn('pending@example.com', response.data['message'])
+        self.assertIn('Pending admin invitation', response.data['message'])
+        self.assertIn('deleted successfully', response.data['message'])
 
     def test_delete_with_role_in_body(self):
         """
@@ -803,6 +836,10 @@ class TestDeleteAdminEndpoint(APITest):
         response = self.client.delete(self.delete_url, data={'role': 'admin'}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('message', response.data)
+        self.assertIn('admin-target@example.com', response.data['message'])
+        self.assertIn('deleted successfully and user account deactivated', response.data['message'])
+        self.assertTrue(response.data['user_deactivated'])
 
 
 @ddt.ddt
