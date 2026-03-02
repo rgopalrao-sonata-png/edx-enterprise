@@ -168,7 +168,11 @@ class EnterpriseCustomerAdminViewSet(
         ENTERPRISE_CUSTOMER_PROVISIONING_ADMIN_ACCESS_PERMISSION,
         fn=lambda request, *args, **kwargs: kwargs.get('enterprise_customer_uuid'),
     )
-    @action(detail=False, methods=['delete'], url_path=r'(?P<enterprise_customer_uuid>[0-9a-fA-F-]+)/admins/(?P<pk>[^/.]+)/delete')
+    @action(
+        detail=False,
+        methods=['delete'],
+        url_path=r'(?P<enterprise_customer_uuid>[0-9a-fA-F-]+)/admins/(?P<pk>[^/.]+)/delete'
+    )
     def delete_admin(self, request, enterprise_customer_uuid=None, pk=None):
         """
         Delete an admin record based on role.
@@ -205,14 +209,14 @@ class EnterpriseCustomerAdminViewSet(
                     id=pk
                 )
                 enterprise_customer = pending_admin.enterprise_customer
-                
+
                 # Verify the provided enterprise_customer_uuid matches the record
                 if str(enterprise_customer.uuid) != str(enterprise_customer_uuid):
                     return Response(
-                        {'error': f'enterprise_customer_uuid mismatch'},
+                        {'error': 'enterprise_customer_uuid mismatch'},
                         status=status.HTTP_400_BAD_REQUEST,
                     )
-                
+
                 pending_admin.delete()
                 logger.info(
                     "Hard deleted PendingEnterpriseCustomerAdminUser id=%s for enterprise %s",
@@ -237,11 +241,11 @@ class EnterpriseCustomerAdminViewSet(
                 )
 
             enterprise_customer = enterprise_customer_user.enterprise_customer
-            
+
             # Verify the provided enterprise_customer_uuid matches the record
             if str(enterprise_customer.uuid) != str(enterprise_customer_uuid):
                 return Response(
-                    {'error': f'enterprise_customer_uuid mismatch'},
+                    {'error': 'enterprise_customer_uuid mismatch'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 

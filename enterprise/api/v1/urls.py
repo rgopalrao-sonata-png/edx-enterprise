@@ -250,6 +250,11 @@ urlpatterns = [
         name='enterprise-customer-admin-invite'
     ),
     re_path(
+        r'^enterprise-customer-admin/(?P<enterprise_customer_uuid>[A-Za-z0-9-]+)/admins/(?P<pk>[^/.]+)/delete/$',
+        EnterpriseCustomerAdminViewSet.as_view({'delete': 'delete_admin'}),
+        name='enterprise-customer-admin-delete-admin'
+    ),
+    re_path(
         r'^(?P<enterprise_uuid>[A-Za-z0-9-]+)/admins$',
         enterprise_admin_members.EnterpriseAdminMembersViewSet.as_view({'get': 'list'}),
         name='enterprise-admin-members',
