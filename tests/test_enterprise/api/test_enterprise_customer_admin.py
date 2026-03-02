@@ -18,13 +18,18 @@ from enterprise.constants import (
     SYSTEM_ENTERPRISE_CATALOG_ADMIN_ROLE,
     SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE,
 )
-from enterprise.models import EnterpriseCustomerAdmin, SystemWideEnterpriseUserRoleAssignment
+from enterprise.models import (
+    EnterpriseCustomerAdmin,
+    PendingEnterpriseCustomerAdminUser,
+    SystemWideEnterpriseUserRoleAssignment,
+)
 from enterprise.roles_api import assign_admin_role
 from test_utils import APITest
 from test_utils.factories import (
     EnterpriseCustomerFactory,
     EnterpriseCustomerUserFactory,
     OnboardingFlowFactory,
+    PendingEnterpriseCustomerAdminUserFactory,
     UserFactory,
 )
 
@@ -577,7 +582,7 @@ class TestDeleteAdminEndpoint(APITest):
             user_id=other_user.id,
             enterprise_customer=other_enterprise,
         )
-        other_admin = EnterpriseCustomerAdmin.objects.create(
+        _other_admin = EnterpriseCustomerAdmin.objects.create(
             enterprise_customer_user=other_ecu,
         )
 
@@ -642,8 +647,6 @@ class TestDeleteAdminEndpoint(APITest):
         """
         Test successful hard delete of a pending admin.
         """
-        from test_utils.factories import PendingEnterpriseCustomerAdminUserFactory
-
         self.set_jwt_cookie(SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, ALL_ACCESS_CONTEXT)
 
         # Create a pending admin
@@ -664,7 +667,6 @@ class TestDeleteAdminEndpoint(APITest):
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
 
         # Verify the pending admin was actually deleted
-        from enterprise.models import PendingEnterpriseCustomerAdminUser
         self.assertFalse(
             PendingEnterpriseCustomerAdminUser.objects.filter(id=pending_admin.id).exists()
         )
@@ -692,8 +694,6 @@ class TestDeleteAdminEndpoint(APITest):
         """
         Test deleting pending admin from one enterprise doesn't affect another.
         """
-        from test_utils.factories import PendingEnterpriseCustomerAdminUserFactory
-
         self.set_jwt_cookie(SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, ALL_ACCESS_CONTEXT)
 
         # Create pending admin for different enterprise
@@ -719,8 +719,6 @@ class TestDeleteAdminEndpoint(APITest):
         """
         Test that deleting pending admin requires proper permissions.
         """
-        from test_utils.factories import PendingEnterpriseCustomerAdminUserFactory
-
         # Don't set JWT cookie
         pending_admin = PendingEnterpriseCustomerAdminUserFactory(
             enterprise_customer=self.enterprise_customer,
@@ -748,8 +746,6 @@ class TestDeleteAdminEndpoint(APITest):
         """
         Test that roles other than provisioning admin cannot delete pending admins.
         """
-        from test_utils.factories import PendingEnterpriseCustomerAdminUserFactory
-
         self.set_jwt_cookie(role, ALL_ACCESS_CONTEXT)
 
         pending_admin = PendingEnterpriseCustomerAdminUserFactory(
@@ -772,8 +768,6 @@ class TestDeleteAdminEndpoint(APITest):
         """
         Test that role parameter is case-insensitive for pending deletion.
         """
-        from test_utils.factories import PendingEnterpriseCustomerAdminUserFactory
-
         self.set_jwt_cookie(SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, ALL_ACCESS_CONTEXT)
 
         pending_admin = PendingEnterpriseCustomerAdminUserFactory(
