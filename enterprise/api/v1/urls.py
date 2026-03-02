@@ -10,6 +10,7 @@ from enterprise.api.v1.views import (
     analytics_summary,
     coupon_codes,
     default_enterprise_enrollments,
+    enterprise_admin_members,
     enterprise_catalog_query,
     enterprise_course_enrollment,
     enterprise_customer,
@@ -247,7 +248,17 @@ urlpatterns = [
         r'^enterprise-customer-admin/(?P<enterprise_customer_uuid>[A-Za-z0-9-]+)/admins/invite/$',
         EnterpriseCustomerAdminViewSet.as_view({'post': 'invite_admins'}),
         name='enterprise-customer-admin-invite'
-    )
+    ),
+    re_path(
+        r'^(?P<enterprise_uuid>[A-Za-z0-9-]+)/admins$',
+        enterprise_admin_members.EnterpriseAdminMembersViewSet.as_view({'get': 'list'}),
+        name='enterprise-admin-members',
+    ),
+    re_path(
+        r'^enterprise-customer/(?P<enterprise_customer_uuid>[A-Za-z0-9-]+)/admins/(?P<admin_pk>[A-Za-z0-9-]+)/?$',
+        EnterpriseCustomerAdminViewSet.as_view({'delete': 'delete_admin'}),
+        name='enterprise-customer-admin-delete'
+    ),
 ]
 
 urlpatterns += router.urls
