@@ -65,7 +65,9 @@ class TestEnterpriseTasks(unittest.TestCase):
     @mock.patch('enterprise.tasks.braze_client_module')
     @mock.patch('enterprise.tasks.get_enterprise_customer')
     @mock.patch('enterprise.tasks.LOGGER')
-    def test_send_enterprise_admin_invite_email_success(self, mock_logger, mock_get_customer, mock_braze_client, mock_settings):
+    def test_send_enterprise_admin_invite_email_success(
+        self, mock_logger, mock_get_customer, mock_braze_client, mock_settings
+    ):
         """
         Test send_enterprise_admin_invite_email sends campaign message successfully.
         """
@@ -93,7 +95,9 @@ class TestEnterpriseTasks(unittest.TestCase):
     @mock.patch('enterprise.tasks.braze_client_module')
     @mock.patch('enterprise.tasks.get_enterprise_customer')
     @mock.patch('enterprise.tasks.LOGGER')
-    def test_send_enterprise_admin_invite_email_braze_error(self, mock_logger, mock_get_customer, mock_braze_client, mock_settings):
+    def test_send_enterprise_admin_invite_email_braze_error(
+        self, mock_logger, mock_get_customer, mock_braze_client, mock_settings
+    ):
         """
         Test send_enterprise_admin_invite_email logs and raises BrazeClientError.
         """
@@ -179,7 +183,9 @@ class TestEnterpriseTasks(unittest.TestCase):
     @mock.patch('enterprise.tasks.settings')
     @mock.patch('enterprise.tasks.get_enterprise_customer')
     @mock.patch('enterprise.tasks.LOGGER')
-    def test_send_enterprise_admin_invite_email_missing_campaign_id(self, mock_logger, mock_get_customer, mock_settings):
+    def test_send_enterprise_admin_invite_email_missing_campaign_id(
+        self, mock_logger, mock_get_customer, mock_settings
+    ):
         """
         Test send_enterprise_admin_invite_email raises ValueError when campaign ID is missing.
         """
