@@ -12,9 +12,11 @@ from rest_framework.test import APITestCase
 from django.urls import reverse
 
 from enterprise.constants import (
+    ACTIVE_ADMIN_ROLE_TYPE,
     ENTERPRISE_ADMIN_ROLE,
     ENTERPRISE_LEARNER_ROLE,
     ENTERPRISE_OPERATOR_ROLE,
+    PENDING_ADMIN_ROLE_TYPE,
     SYSTEM_ENTERPRISE_CATALOG_ADMIN_ROLE,
     SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE,
 )
@@ -59,10 +61,10 @@ class TestEnterpriseCustomerAdminViewSet(APITestCase):
         self.admin.completed_tour_flows.add(self.flow1)
 
         self.list_url = reverse('enterprise-customer-admin-list')
-        self.detail_url = reverse('enterprise-customer-admin-detail', kwargs={'pk': self.admin.uuid})
+        self.detail_url = reverse('enterprise-customer-admin-detail', kwargs={'customer_id': self.admin.uuid})
         self.complete_tour_flow_url = reverse(
             'enterprise-customer-admin-complete-tour-flow',
-            kwargs={'pk': self.admin.uuid}
+            kwargs={'customer_id': self.admin.uuid}
         )
         self.create_admin_by_email_url = reverse('enterprise-customer-admin-create-admin-by-email')
 
@@ -348,7 +350,7 @@ class TestDeleteAdminEndpoint(APITest):
         self.delete_url = reverse(
             'enterprise-customer-admin-delete-admin',
             kwargs={
-                'pk': str(self.enterprise_customer_user.id),
+                'customer_id': str(self.enterprise_customer_user.id),
             },
         )
         self.list_url = reverse('enterprise-customer-admin-list')
@@ -386,7 +388,7 @@ class TestDeleteAdminEndpoint(APITest):
             enterprise_customer=self.enterprise_customer,
         ).exclude(role__name=ENTERPRISE_ADMIN_ROLE).delete()
 
-        response = self.client.delete(f'{self.delete_url}?role=admin')
+        response = self.client.delete(f'{self.delete_url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
@@ -420,7 +422,7 @@ class TestDeleteAdminEndpoint(APITest):
         ).exclude(role__name=ENTERPRISE_ADMIN_ROLE).delete()
 
         # Soft delete the admin
-        self.client.delete(f'{self.delete_url}?role=admin')
+        self.client.delete(f'{self.delete_url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
 
         # Authenticate as the target user and check list
         self.client.force_authenticate(user=self.target_user)
@@ -444,7 +446,7 @@ class TestDeleteAdminEndpoint(APITest):
             ).exists()
         )
 
-        self.client.delete(f'{self.delete_url}?role=admin')
+        self.client.delete(f'{self.delete_url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
 
         # Verify role no longer exists
         self.assertFalse(
@@ -471,7 +473,7 @@ class TestDeleteAdminEndpoint(APITest):
             ).exclude(role__name=ENTERPRISE_ADMIN_ROLE).exists()
         )
 
-        self.client.delete(f'{self.delete_url}?role=admin')
+        self.client.delete(f'{self.delete_url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
 
         # ECU should remain active because learner role still exists
         self.enterprise_customer_user.refresh_from_db()
@@ -498,7 +500,7 @@ class TestDeleteAdminEndpoint(APITest):
             ).exclude(role__name=ENTERPRISE_ADMIN_ROLE).exists()
         )
 
-        self.client.delete(f'{self.delete_url}?role=admin')
+        self.client.delete(f'{self.delete_url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
 
         # ECU should be deactivated
         self.enterprise_customer_user.refresh_from_db()
@@ -509,7 +511,7 @@ class TestDeleteAdminEndpoint(APITest):
         Test that the endpoint requires the provisioning admin permission.
         """
         # Don't set JWT cookie
-        response = self.client.delete(f'{self.delete_url}?role=admin')
+        response = self.client.delete(f'{self.delete_url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
@@ -525,7 +527,7 @@ class TestDeleteAdminEndpoint(APITest):
         """
         self.set_jwt_cookie(role, ALL_ACCESS_CONTEXT)
 
-        response = self.client.delete(f'{self.delete_url}?role=admin')
+        response = self.client.delete(f'{self.delete_url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
@@ -539,11 +541,11 @@ class TestDeleteAdminEndpoint(APITest):
         url = reverse(
             'enterprise-customer-admin-delete-admin',
             kwargs={
-                'pk': fake_id,
+                'customer_id': fake_id,
             },
         )
 
-        response = self.client.delete(f'{url}?role=admin')
+        response = self.client.delete(f'{url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -557,15 +559,15 @@ class TestDeleteAdminEndpoint(APITest):
         url = reverse(
             'enterprise-customer-admin-delete-admin',
             kwargs={
-                'pk': fake_id,
+                'customer_id': fake_id,
             },
         )
 
-        response = self.client.delete(f'{url}?role=admin')
+        response = self.client.delete(f'{url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
-        response = self.client.delete(f'{url}?role=admin')
+        response = self.client.delete(f'{url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -589,11 +591,11 @@ class TestDeleteAdminEndpoint(APITest):
         url = reverse(
             'enterprise-customer-admin-delete-admin',
             kwargs={
-                'pk': str(other_ecu.id),
+                'customer_id': str(other_ecu.id),
             },
         )
 
-        response = self.client.delete(f'{url}?role=admin')
+        response = self.client.delete(f'{url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
 
         # Should succeed - it's a valid admin from a different enterprise
         # The endpoint doesn't validate enterprise match when using ECU id
@@ -611,7 +613,7 @@ class TestDeleteAdminEndpoint(APITest):
             enterprise_customer=self.enterprise_customer,
         ).delete()
 
-        response = self.client.delete(f'{self.delete_url}?role=admin')
+        response = self.client.delete(f'{self.delete_url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertIn('Admin role assignment does not exist', response.data['error'])
@@ -658,11 +660,11 @@ class TestDeleteAdminEndpoint(APITest):
         url = reverse(
             'enterprise-customer-admin-delete-admin',
             kwargs={
-                'pk': str(pending_admin.id),
+                'customer_id': str(pending_admin.id),
             },
         )
 
-        response = self.client.delete(f'{url}?role=pending')
+        response = self.client.delete(f'{url}?role={PENDING_ADMIN_ROLE_TYPE}')
 
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
 
@@ -681,11 +683,11 @@ class TestDeleteAdminEndpoint(APITest):
         url = reverse(
             'enterprise-customer-admin-delete-admin',
             kwargs={
-                'pk': fake_id,
+                'customer_id': fake_id,
             },
         )
 
-        response = self.client.delete(f'{url}?role=pending')
+        response = self.client.delete(f'{url}?role={PENDING_ADMIN_ROLE_TYPE}')
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertIn('PendingEnterpriseCustomerAdminUser', response.data['error'])
@@ -706,11 +708,11 @@ class TestDeleteAdminEndpoint(APITest):
         url = reverse(
             'enterprise-customer-admin-delete-admin',
             kwargs={
-                'pk': str(pending_admin.id),
+                'customer_id': str(pending_admin.id),
             },
         )
 
-        response = self.client.delete(f'{url}?role=pending')
+        response = self.client.delete(f'{url}?role={PENDING_ADMIN_ROLE_TYPE}')
 
         # Should succeed - pending admin ID is unique across all enterprises
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
@@ -728,11 +730,11 @@ class TestDeleteAdminEndpoint(APITest):
         url = reverse(
             'enterprise-customer-admin-delete-admin',
             kwargs={
-                'pk': str(pending_admin.id),
+                'customer_id': str(pending_admin.id),
             },
         )
 
-        response = self.client.delete(f'{url}?role=pending')
+        response = self.client.delete(f'{url}?role={PENDING_ADMIN_ROLE_TYPE}')
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
@@ -756,11 +758,11 @@ class TestDeleteAdminEndpoint(APITest):
         url = reverse(
             'enterprise-customer-admin-delete-admin',
             kwargs={
-                'pk': str(pending_admin.id),
+                'customer_id': str(pending_admin.id),
             },
         )
 
-        response = self.client.delete(f'{url}?role=pending')
+        response = self.client.delete(f'{url}?role={PENDING_ADMIN_ROLE_TYPE}')
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
@@ -778,7 +780,7 @@ class TestDeleteAdminEndpoint(APITest):
         url = reverse(
             'enterprise-customer-admin-delete-admin',
             kwargs={
-                'pk': str(pending_admin.id),
+                'customer_id': str(pending_admin.id),
             },
         )
 

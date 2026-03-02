@@ -37,6 +37,10 @@ DEFAULT_USERNAME_ATTR = 'urn:oid:0.9.2342.19200300.100.1.1'
 
 MAX_INVITE_KEYS = 100
 
+# Admin role types for delete_admin endpoint
+PENDING_ADMIN_ROLE_TYPE = 'pending'
+ACTIVE_ADMIN_ROLE_TYPE = 'admin'
+
 
 class DefaultColors:
     """

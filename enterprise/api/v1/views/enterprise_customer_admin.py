@@ -17,7 +17,12 @@ from django.shortcuts import get_object_or_404
 from enterprise import models, roles_api
 from enterprise.api import utils as admin_utils
 from enterprise.api.v1.serializers import AdminInviteSerializer, EnterpriseCustomerAdminSerializer
-from enterprise.constants import ENTERPRISE_ADMIN_ROLE, ENTERPRISE_CUSTOMER_PROVISIONING_ADMIN_ACCESS_PERMISSION
+from enterprise.constants import (
+    ACTIVE_ADMIN_ROLE_TYPE,
+    ENTERPRISE_ADMIN_ROLE,
+    ENTERPRISE_CUSTOMER_PROVISIONING_ADMIN_ACCESS_PERMISSION,
+    PENDING_ADMIN_ROLE_TYPE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -164,90 +169,69 @@ class EnterpriseCustomerAdminViewSet(
         serializer = self.get_serializer(admin)
         return Response(serializer.data, status=response_status_code)
 
-    @permission_required(
-        ENTERPRISE_CUSTOMER_PROVISIONING_ADMIN_ACCESS_PERMISSION,
-        fn=lambda request, *args, **kwargs: kwargs.get('enterprise_customer_uuid'),
-    )
     @action(
         detail=False,
         methods=['delete'],
-        url_path=r'(?P<enterprise_customer_uuid>[0-9a-fA-F-]+)/admins/(?P<pk>[^/.]+)/delete'
+        url_path=r'(?P<customer_id>[^/.]+)/delete'
     )
-    def delete_admin(self, request, enterprise_customer_uuid=None, pk=None):
+    def delete_admin(self, request, customer_id=None):
         """
         Delete an admin record based on role.
-        DELETE /enterprise/api/v1/enterprise-customer-admin/{enterprise_customer_uuid}/admins/{pk}/delete/?role=<role>
-
-        The requesting user must have the ``enterprise_provisioning_admin``
-        role to access this endpoint.
+        DELETE /enterprise/api/v1/enterprise-customer-admin/{customer_id}/delete/?role=<role>
 
         Path Parameters:
-        - ``enterprise_customer_uuid``: UUID of the enterprise customer
-        - ``pk``: ID of the admin record to delete
+        - ``customer_id``: ID of the admin record to delete (PendingEnterpriseCustomerAdminUser ID
+          or EnterpriseCustomerUser ID)
 
         Query Parameters:
         - ``role``: Either 'pending' or 'admin' (required)
 
         Based on the role query parameter:
-        - If role='pending': Hard deletes PendingEnterpriseCustomerAdminUser where id=pk
+        - If role='pending': Hard deletes PendingEnterpriseCustomerAdminUser where id=customer_id
         - If role='admin': Deletes role assignment from SystemWideEnterpriseUserRoleAssignment
-          for the EnterpriseCustomerUser id=pk, and deactivates
+          for the EnterpriseCustomerUser id=customer_id, and deactivates
           EnterpriseCustomerUser if no other roles exist
         """
         role = request.query_params.get('role') or request.data.get('role')
 
         if not role:
             return Response(
-                {'error': 'role parameter is required (pending or admin)'},
+                {'error': f'role parameter is required ({PENDING_ADMIN_ROLE_TYPE} or {ACTIVE_ADMIN_ROLE_TYPE})'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if role.lower() == 'pending':
+        if role.lower() == PENDING_ADMIN_ROLE_TYPE:
             # Hard delete pending admin by id
             try:
                 pending_admin = models.PendingEnterpriseCustomerAdminUser.objects.get(
-                    id=pk
+                    id=customer_id
                 )
                 enterprise_customer = pending_admin.enterprise_customer
-
-                # Verify the provided enterprise_customer_uuid matches the record
-                if str(enterprise_customer.uuid) != str(enterprise_customer_uuid):
-                    return Response(
-                        {'error': 'enterprise_customer_uuid mismatch'},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
 
                 pending_admin.delete()
                 logger.info(
                     "Hard deleted PendingEnterpriseCustomerAdminUser id=%s for enterprise %s",
-                    pk,
+                    customer_id,
                     enterprise_customer.uuid
                 )
                 return Response(status=status.HTTP_204_NO_CONTENT)
             except models.PendingEnterpriseCustomerAdminUser.DoesNotExist:
                 return Response(
-                    {'error': f'PendingEnterpriseCustomerAdminUser with id {pk} does not exist'},
+                    {'error': f'PendingEnterpriseCustomerAdminUser with id {customer_id} does not exist'},
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-        elif role.lower() == 'admin':
+        elif role.lower() == ACTIVE_ADMIN_ROLE_TYPE:
             # Validate enterprise customer user exists
             try:
-                enterprise_customer_user = models.EnterpriseCustomerUser.objects.get(id=pk)
+                enterprise_customer_user = models.EnterpriseCustomerUser.objects.get(id=customer_id)
             except models.EnterpriseCustomerUser.DoesNotExist:
                 return Response(
-                    {'error': f'EnterpriseCustomerUser with id {pk} does not exist'},
+                    {'error': f'EnterpriseCustomerUser with id {customer_id} does not exist'},
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
             enterprise_customer = enterprise_customer_user.enterprise_customer
-
-            # Verify the provided enterprise_customer_uuid matches the record
-            if str(enterprise_customer.uuid) != str(enterprise_customer_uuid):
-                return Response(
-                    {'error': 'enterprise_customer_uuid mismatch'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
 
             # Verify admin record exists
             if not models.EnterpriseCustomerAdmin.objects.filter(
@@ -257,7 +241,7 @@ class EnterpriseCustomerAdminViewSet(
                     {
                         'error': (
                             f'EnterpriseCustomerAdmin for enterprise_customer_user_id '
-                            f'{pk} does not exist'
+                            f'{customer_id} does not exist'
                         )
                     },
                     status=status.HTTP_404_NOT_FOUND,
@@ -321,7 +305,7 @@ class EnterpriseCustomerAdminViewSet(
 
         else:
             return Response(
-                {'error': 'Invalid role. Must be "pending" or "admin"'},
+                {'error': f'Invalid role. Must be "{PENDING_ADMIN_ROLE_TYPE}" or "{ACTIVE_ADMIN_ROLE_TYPE}"'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
