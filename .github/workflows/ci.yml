@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [master,ENT-11238-invite-admin-endpoint]
   pull_request:
 
 concurrency:
