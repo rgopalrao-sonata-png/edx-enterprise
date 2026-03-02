@@ -61,10 +61,10 @@ class TestEnterpriseCustomerAdminViewSet(APITestCase):
         self.admin.completed_tour_flows.add(self.flow1)
 
         self.list_url = reverse('enterprise-customer-admin-list')
-        self.detail_url = reverse('enterprise-customer-admin-detail', kwargs={'customer_id': self.admin.uuid})
+        self.detail_url = reverse('enterprise-customer-admin-detail', kwargs={'pk': self.admin.uuid})
         self.complete_tour_flow_url = reverse(
             'enterprise-customer-admin-complete-tour-flow',
-            kwargs={'customer_id': self.admin.uuid}
+            kwargs={'pk': self.admin.uuid}
         )
         self.create_admin_by_email_url = reverse('enterprise-customer-admin-create-admin-by-email')
 
