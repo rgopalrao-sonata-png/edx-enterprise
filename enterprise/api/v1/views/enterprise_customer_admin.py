@@ -166,64 +166,160 @@ class EnterpriseCustomerAdminViewSet(
 
     @permission_required(
         ENTERPRISE_CUSTOMER_PROVISIONING_ADMIN_ACCESS_PERMISSION,
-        fn=lambda request, enterprise_customer_uuid, *args, **kwargs: enterprise_customer_uuid,
+        fn=lambda request, *args, **kwargs: kwargs.get('enterprise_customer_uuid'),
     )
-    def delete_admin(self, request, enterprise_customer_uuid=None, admin_pk=None):
+    @action(detail=False, methods=['delete'], url_path=r'(?P<enterprise_customer_uuid>[0-9a-fA-F-]+)/admins/(?P<pk>[^/.]+)/delete')
+    def delete_admin(self, request, enterprise_customer_uuid=None, pk=None):
         """
-        Soft delete an EnterpriseCustomerAdmin record.
-        DELETE /api/v1/enterprise-customer/{enterprise_customer_uuid}/admins/{admin_pk}/
+        Delete an admin record based on role.
+        DELETE /enterprise/api/v1/enterprise-customer-admin/{enterprise_customer_uuid}/admins/{pk}/delete/?role=<role>
 
         The requesting user must have the ``enterprise_provisioning_admin``
         role to access this endpoint.
 
-        Removes the enterprise_admin role assignment and deactivates the
-        EnterpriseCustomerUser if the user has no other roles for the enterprise.
-        The ECA record itself is left untouched in the database.
+        Path Parameters:
+        - ``enterprise_customer_uuid``: UUID of the enterprise customer
+        - ``pk``: ID of the admin record to delete
+
+        Query Parameters:
+        - ``role``: Either 'pending' or 'admin' (required)
+
+        Based on the role query parameter:
+        - If role='pending': Hard deletes PendingEnterpriseCustomerAdminUser where id=pk
+        - If role='admin': Deletes role assignment from SystemWideEnterpriseUserRoleAssignment
+          for the EnterpriseCustomerUser id=pk, and deactivates
+          EnterpriseCustomerUser if no other roles exist
         """
-        # Validate enterprise customer
-        try:
-            enterprise_customer = models.EnterpriseCustomer.objects.get(uuid=enterprise_customer_uuid)
-        except models.EnterpriseCustomer.DoesNotExist:
+        role = request.query_params.get('role') or request.data.get('role')
+
+        if not role:
             return Response(
-                {'error': f'EnterpriseCustomer with uuid {enterprise_customer_uuid} does not exist'},
-                status=status.HTTP_404_NOT_FOUND,
+                {'error': 'role parameter is required (pending or admin)'},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Look up admin record
-        try:
-            admin = models.EnterpriseCustomerAdmin.objects.get(pk=admin_pk)
-        except models.EnterpriseCustomerAdmin.DoesNotExist:
-            return Response(
-                {'error': f'EnterpriseCustomerAdmin with id {admin_pk} does not exist'},
-                status=status.HTTP_404_NOT_FOUND,
+        if role.lower() == 'pending':
+            # Hard delete pending admin by id
+            try:
+                pending_admin = models.PendingEnterpriseCustomerAdminUser.objects.get(
+                    id=pk
+                )
+                enterprise_customer = pending_admin.enterprise_customer
+                
+                # Verify the provided enterprise_customer_uuid matches the record
+                if str(enterprise_customer.uuid) != str(enterprise_customer_uuid):
+                    return Response(
+                        {'error': f'enterprise_customer_uuid mismatch'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                
+                pending_admin.delete()
+                logger.info(
+                    "Hard deleted PendingEnterpriseCustomerAdminUser id=%s for enterprise %s",
+                    pk,
+                    enterprise_customer.uuid
+                )
+                return Response(status=status.HTTP_204_NO_CONTENT)
+            except models.PendingEnterpriseCustomerAdminUser.DoesNotExist:
+                return Response(
+                    {'error': f'PendingEnterpriseCustomerAdminUser with id {pk} does not exist'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+        elif role.lower() == 'admin':
+            # Validate enterprise customer user exists
+            try:
+                enterprise_customer_user = models.EnterpriseCustomerUser.objects.get(id=pk)
+            except models.EnterpriseCustomerUser.DoesNotExist:
+                return Response(
+                    {'error': f'EnterpriseCustomerUser with id {pk} does not exist'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            enterprise_customer = enterprise_customer_user.enterprise_customer
+            
+            # Verify the provided enterprise_customer_uuid matches the record
+            if str(enterprise_customer.uuid) != str(enterprise_customer_uuid):
+                return Response(
+                    {'error': f'enterprise_customer_uuid mismatch'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Verify admin record exists
+            if not models.EnterpriseCustomerAdmin.objects.filter(
+                enterprise_customer_user=enterprise_customer_user
+            ).exists():
+                return Response(
+                    {
+                        'error': (
+                            f'EnterpriseCustomerAdmin for enterprise_customer_user_id '
+                            f'{pk} does not exist'
+                        )
+                    },
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            # Get the user
+            user = enterprise_customer_user.user
+
+            # Check if admin role assignment exists
+            role_assignment = models.SystemWideEnterpriseUserRoleAssignment.objects.filter(
+                user=user,
+                enterprise_customer=enterprise_customer,
+                role__name=ENTERPRISE_ADMIN_ROLE,
             )
 
-        # Verify admin belongs to the given enterprise customer
-        if admin.enterprise_customer_user.enterprise_customer_id != enterprise_customer.uuid:
-            return Response(
-                {'error': 'Admin does not belong to the specified enterprise customer'},
-                status=status.HTTP_404_NOT_FOUND,
+            if not role_assignment.exists():
+                return Response(
+                    {
+                        'error': (
+                            f'Admin role assignment does not exist for user {user.id} '
+                            f'in enterprise {enterprise_customer.uuid}'
+                        )
+                    },
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            # Delete the admin role from SystemWideEnterpriseUserRoleAssignment
+            deleted_count = role_assignment.delete()[0]
+
+            logger.info(
+                "Deleted %s admin role assignment(s) for user %s in enterprise %s",
+                deleted_count,
+                user.id,
+                enterprise_customer.uuid
             )
 
-        # Remove enterprise_admin role
-        enterprise_customer_user = admin.enterprise_customer_user
-        user = enterprise_customer_user.user
-        roles_api.delete_admin_role_assignment(user=user, enterprise_customer=enterprise_customer)
+            # Check if user has other roles for this enterprise
+            has_other_roles = models.SystemWideEnterpriseUserRoleAssignment.objects.filter(
+                user=user,
+                enterprise_customer=enterprise_customer,
+            ).exists()
 
-        # Check if user has other roles for this enterprise
-        has_other_roles = models.SystemWideEnterpriseUserRoleAssignment.objects.filter(
-            user=user,
-            enterprise_customer=enterprise_customer,
-        ).exclude(
-            role__name=ENTERPRISE_ADMIN_ROLE,
-        ).exists()
+            # If no other roles, deactivate the EnterpriseCustomerUser (soft delete)
+            if not has_other_roles:
+                enterprise_customer_user.active = False
+                enterprise_customer_user.save(update_fields=['active', 'modified'])
+                logger.info(
+                    "Deactivated EnterpriseCustomerUser id=%s for user %s in enterprise %s (no other roles)",
+                    enterprise_customer_user.id,
+                    user.id,
+                    enterprise_customer.uuid
+                )
+            else:
+                logger.info(
+                    "Kept EnterpriseCustomerUser id=%s active for user %s (has other roles)",
+                    enterprise_customer_user.id,
+                    user.id
+                )
 
-        # If no other roles, deactivate the EnterpriseCustomerUser
-        if not has_other_roles:
-            enterprise_customer_user.active = False
-            enterprise_customer_user.save(update_fields=['active', 'modified'])
+            return Response(status=status.HTTP_200_OK)
 
-        return Response(status=status.HTTP_200_OK)
+        else:
+            return Response(
+                {'error': 'Invalid role. Must be "pending" or "admin"'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     @permission_required(
         ENTERPRISE_CUSTOMER_PROVISIONING_ADMIN_ACCESS_PERMISSION,

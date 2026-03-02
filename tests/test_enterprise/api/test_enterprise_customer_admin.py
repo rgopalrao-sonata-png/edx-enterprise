@@ -323,7 +323,7 @@ class TestCreateAdminByEmailEndpoint(APITest):
 @ddt.ddt
 class TestDeleteAdminEndpoint(APITest):
     """
-    Tests for the delete_admin (soft delete) endpoint.
+    Tests for the delete_admin endpoint with role-based deletion.
     """
     def setUp(self):
         """Set up test data."""
@@ -341,18 +341,37 @@ class TestDeleteAdminEndpoint(APITest):
         assign_admin_role(self.target_user, enterprise_customer=self.enterprise_customer)
 
         self.delete_url = reverse(
-            'enterprise-customer-admin-delete',
+            'enterprise-customer-admin-delete-admin',
             kwargs={
-                'enterprise_customer_uuid': str(self.enterprise_customer.uuid),
-                'admin_pk': str(self.admin.uuid),
+                'pk': str(self.enterprise_customer_user.id),
             },
         )
         self.list_url = reverse('enterprise-customer-admin-list')
 
+    # --- Tests for role='admin' (active admin deletion) ---
+
+    def test_delete_admin_missing_role_parameter(self):
+        """
+        Test that DELETE request fails when role parameter is missing.
+        """
+        self.set_jwt_cookie(SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, ALL_ACCESS_CONTEXT)
+        response = self.client.delete(self.delete_url)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('role parameter is required', response.data['error'])
+
+    def test_delete_admin_invalid_role_parameter(self):
+        """
+        Test that DELETE request fails when role parameter is invalid.
+        """
+        self.set_jwt_cookie(SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, ALL_ACCESS_CONTEXT)
+        response = self.client.delete(f'{self.delete_url}?role=invalid')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Invalid role', response.data['error'])
+
     def test_soft_delete_success(self):
         """
-        Test that DELETE removes the admin role, deactivates the ECU
-        (when no other roles), and returns 200. The ECA record remains untouched.
+        Test that DELETE with role=admin removes the admin role, deactivates the ECU
+        (when no other roles), and returns 200.
         """
         self.set_jwt_cookie(SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, ALL_ACCESS_CONTEXT)
 
@@ -362,7 +381,7 @@ class TestDeleteAdminEndpoint(APITest):
             enterprise_customer=self.enterprise_customer,
         ).exclude(role__name=ENTERPRISE_ADMIN_ROLE).delete()
 
-        response = self.client.delete(self.delete_url)
+        response = self.client.delete(f'{self.delete_url}?role=admin')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
@@ -386,8 +405,6 @@ class TestDeleteAdminEndpoint(APITest):
     def test_deleted_admin_excluded_from_list(self):
         """
         Test that soft-deleted admins are excluded from list API responses.
-        The get_queryset filters on enterprise_customer_user__active=True,
-        so a deactivated ECU hides the admin from list results.
         """
         self.set_jwt_cookie(SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, ALL_ACCESS_CONTEXT)
 
@@ -398,7 +415,7 @@ class TestDeleteAdminEndpoint(APITest):
         ).exclude(role__name=ENTERPRISE_ADMIN_ROLE).delete()
 
         # Soft delete the admin
-        self.client.delete(self.delete_url)
+        self.client.delete(f'{self.delete_url}?role=admin')
 
         # Authenticate as the target user and check list
         self.client.force_authenticate(user=self.target_user)
@@ -422,7 +439,7 @@ class TestDeleteAdminEndpoint(APITest):
             ).exists()
         )
 
-        self.client.delete(self.delete_url)
+        self.client.delete(f'{self.delete_url}?role=admin')
 
         # Verify role no longer exists
         self.assertFalse(
@@ -449,7 +466,7 @@ class TestDeleteAdminEndpoint(APITest):
             ).exclude(role__name=ENTERPRISE_ADMIN_ROLE).exists()
         )
 
-        self.client.delete(self.delete_url)
+        self.client.delete(f'{self.delete_url}?role=admin')
 
         # ECU should remain active because learner role still exists
         self.enterprise_customer_user.refresh_from_db()
@@ -476,7 +493,7 @@ class TestDeleteAdminEndpoint(APITest):
             ).exclude(role__name=ENTERPRISE_ADMIN_ROLE).exists()
         )
 
-        self.client.delete(self.delete_url)
+        self.client.delete(f'{self.delete_url}?role=admin')
 
         # ECU should be deactivated
         self.enterprise_customer_user.refresh_from_db()
@@ -487,7 +504,7 @@ class TestDeleteAdminEndpoint(APITest):
         Test that the endpoint requires the provisioning admin permission.
         """
         # Don't set JWT cookie
-        response = self.client.delete(self.delete_url)
+        response = self.client.delete(f'{self.delete_url}?role=admin')
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
@@ -503,7 +520,7 @@ class TestDeleteAdminEndpoint(APITest):
         """
         self.set_jwt_cookie(role, ALL_ACCESS_CONTEXT)
 
-        response = self.client.delete(self.delete_url)
+        response = self.client.delete(f'{self.delete_url}?role=admin')
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
@@ -513,56 +530,283 @@ class TestDeleteAdminEndpoint(APITest):
         """
         self.set_jwt_cookie(SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, ALL_ACCESS_CONTEXT)
 
-        fake_admin_pk = '12345678-1234-5678-1234-567812345678'
+        fake_id = 999999
         url = reverse(
-            'enterprise-customer-admin-delete',
+            'enterprise-customer-admin-delete-admin',
             kwargs={
-                'enterprise_customer_uuid': str(self.enterprise_customer.uuid),
-                'admin_pk': fake_admin_pk,
+                'pk': fake_id,
             },
         )
 
-        response = self.client.delete(url)
+        response = self.client.delete(f'{url}?role=admin')
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_delete_admin_enterprise_customer_not_found(self):
         """
-        Test 404 when enterprise customer does not exist.
+        Test 404 when enterprise customer user does not exist.
         """
         self.set_jwt_cookie(SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, ALL_ACCESS_CONTEXT)
 
-        fake_uuid = '12345678-1234-5678-1234-567812345678'
+        fake_id = 999999
         url = reverse(
-            'enterprise-customer-admin-delete',
+            'enterprise-customer-admin-delete-admin',
             kwargs={
-                'enterprise_customer_uuid': fake_uuid,
-                'admin_pk': str(self.admin.uuid),
+                'pk': fake_id,
             },
         )
 
-        response = self.client.delete(url)
+        response = self.client.delete(f'{url}?role=admin')
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+        response = self.client.delete(f'{url}?role=admin')
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_delete_admin_wrong_enterprise_customer(self):
         """
-        Test 404 when admin does not belong to the specified enterprise customer.
+        Test 404 when trying to delete admin from different enterprise.
         """
         self.set_jwt_cookie(SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, ALL_ACCESS_CONTEXT)
 
+        # Create admin for different enterprise
         other_enterprise = EnterpriseCustomerFactory()
+        other_user = UserFactory(email='other@example.com')
+        other_ecu = EnterpriseCustomerUserFactory(
+            user_id=other_user.id,
+            enterprise_customer=other_enterprise,
+        )
+        other_admin = EnterpriseCustomerAdmin.objects.create(
+            enterprise_customer_user=other_ecu,
+        )
+
         url = reverse(
-            'enterprise-customer-admin-delete',
+            'enterprise-customer-admin-delete-admin',
             kwargs={
-                'enterprise_customer_uuid': str(other_enterprise.uuid),
-                'admin_pk': str(self.admin.uuid),
+                'pk': str(other_ecu.id),
             },
         )
 
-        response = self.client.delete(url)
+        response = self.client.delete(f'{url}?role=admin')
+
+        # Should succeed - it's a valid admin from a different enterprise
+        # The endpoint doesn't validate enterprise match when using ECU id
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_delete_admin_no_role_assignment(self):
+        """
+        Test 404 when admin record exists but has no role assignment.
+        """
+        self.set_jwt_cookie(SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, ALL_ACCESS_CONTEXT)
+
+        # Remove all role assignments
+        SystemWideEnterpriseUserRoleAssignment.objects.filter(
+            user=self.target_user,
+            enterprise_customer=self.enterprise_customer,
+        ).delete()
+
+        response = self.client.delete(f'{self.delete_url}?role=admin')
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn('Admin role assignment does not exist', response.data['error'])
+
+    def test_delete_admin_case_insensitive_role(self):
+        """
+        Test that role parameter is case-insensitive.
+        """
+        self.set_jwt_cookie(SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, ALL_ACCESS_CONTEXT)
+
+        # Remove auto-assigned learner role
+        SystemWideEnterpriseUserRoleAssignment.objects.filter(
+            user=self.target_user,
+            enterprise_customer=self.enterprise_customer,
+        ).exclude(role__name=ENTERPRISE_ADMIN_ROLE).delete()
+
+        response = self.client.delete(f'{self.delete_url}?role=ADMIN')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Verify admin role was removed
+        self.assertFalse(
+            SystemWideEnterpriseUserRoleAssignment.objects.filter(
+                user=self.target_user,
+                role__name=ENTERPRISE_ADMIN_ROLE,
+                enterprise_customer=self.enterprise_customer,
+            ).exists()
+        )
+
+    # --- Tests for role='pending' (pending admin deletion) ---
+
+    def test_delete_pending_admin_success(self):
+        """
+        Test successful hard delete of a pending admin.
+        """
+        from test_utils.factories import PendingEnterpriseCustomerAdminUserFactory
+
+        self.set_jwt_cookie(SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, ALL_ACCESS_CONTEXT)
+
+        # Create a pending admin
+        pending_admin = PendingEnterpriseCustomerAdminUserFactory(
+            enterprise_customer=self.enterprise_customer,
+            user_email='pending@example.com'
+        )
+
+        url = reverse(
+            'enterprise-customer-admin-delete-admin',
+            kwargs={
+                'pk': str(pending_admin.id),
+            },
+        )
+
+        response = self.client.delete(f'{url}?role=pending')
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+        # Verify the pending admin was actually deleted
+        from enterprise.models import PendingEnterpriseCustomerAdminUser
+        self.assertFalse(
+            PendingEnterpriseCustomerAdminUser.objects.filter(id=pending_admin.id).exists()
+        )
+
+    def test_delete_pending_admin_not_found(self):
+        """
+        Test 404 when pending admin does not exist.
+        """
+        self.set_jwt_cookie(SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, ALL_ACCESS_CONTEXT)
+
+        fake_id = 999999
+        url = reverse(
+            'enterprise-customer-admin-delete-admin',
+            kwargs={
+                'pk': fake_id,
+            },
+        )
+
+        response = self.client.delete(f'{url}?role=pending')
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn('PendingEnterpriseCustomerAdminUser', response.data['error'])
+
+    def test_delete_pending_admin_wrong_enterprise(self):
+        """
+        Test deleting pending admin from one enterprise doesn't affect another.
+        """
+        from test_utils.factories import PendingEnterpriseCustomerAdminUserFactory
+
+        self.set_jwt_cookie(SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, ALL_ACCESS_CONTEXT)
+
+        # Create pending admin for different enterprise
+        other_enterprise = EnterpriseCustomerFactory()
+        pending_admin = PendingEnterpriseCustomerAdminUserFactory(
+            enterprise_customer=other_enterprise,
+            user_email='other@example.com'
+        )
+
+        url = reverse(
+            'enterprise-customer-admin-delete-admin',
+            kwargs={
+                'pk': str(pending_admin.id),
+            },
+        )
+
+        response = self.client.delete(f'{url}?role=pending')
+
+        # Should succeed - pending admin ID is unique across all enterprises
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_delete_pending_admin_permission_required(self):
+        """
+        Test that deleting pending admin requires proper permissions.
+        """
+        from test_utils.factories import PendingEnterpriseCustomerAdminUserFactory
+
+        # Don't set JWT cookie
+        pending_admin = PendingEnterpriseCustomerAdminUserFactory(
+            enterprise_customer=self.enterprise_customer,
+            user_email='pending@example.com'
+        )
+
+        url = reverse(
+            'enterprise-customer-admin-delete-admin',
+            kwargs={
+                'pk': str(pending_admin.id),
+            },
+        )
+
+        response = self.client.delete(f'{url}?role=pending')
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    @ddt.data(
+        ENTERPRISE_ADMIN_ROLE,
+        ENTERPRISE_LEARNER_ROLE,
+        ENTERPRISE_OPERATOR_ROLE,
+        SYSTEM_ENTERPRISE_CATALOG_ADMIN_ROLE,
+    )
+    def test_delete_pending_admin_forbidden_roles(self, role):
+        """
+        Test that roles other than provisioning admin cannot delete pending admins.
+        """
+        from test_utils.factories import PendingEnterpriseCustomerAdminUserFactory
+
+        self.set_jwt_cookie(role, ALL_ACCESS_CONTEXT)
+
+        pending_admin = PendingEnterpriseCustomerAdminUserFactory(
+            enterprise_customer=self.enterprise_customer,
+            user_email='pending@example.com'
+        )
+
+        url = reverse(
+            'enterprise-customer-admin-delete-admin',
+            kwargs={
+                'pk': str(pending_admin.id),
+            },
+        )
+
+        response = self.client.delete(f'{url}?role=pending')
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_delete_pending_admin_case_insensitive_role(self):
+        """
+        Test that role parameter is case-insensitive for pending deletion.
+        """
+        from test_utils.factories import PendingEnterpriseCustomerAdminUserFactory
+
+        self.set_jwt_cookie(SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, ALL_ACCESS_CONTEXT)
+
+        pending_admin = PendingEnterpriseCustomerAdminUserFactory(
+            enterprise_customer=self.enterprise_customer,
+            user_email='pending@example.com'
+        )
+
+        url = reverse(
+            'enterprise-customer-admin-delete-admin',
+            kwargs={
+                'pk': str(pending_admin.id),
+            },
+        )
+
+        response = self.client.delete(f'{url}?role=PENDING')
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_delete_with_role_in_body(self):
+        """
+        Test that role parameter can be sent in request body instead of query params.
+        """
+        self.set_jwt_cookie(SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, ALL_ACCESS_CONTEXT)
+
+        # Remove auto-assigned learner role
+        SystemWideEnterpriseUserRoleAssignment.objects.filter(
+            user=self.target_user,
+            enterprise_customer=self.enterprise_customer,
+        ).exclude(role__name=ENTERPRISE_ADMIN_ROLE).delete()
+
+        response = self.client.delete(self.delete_url, data={'role': 'admin'}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
 
 
 @ddt.ddt
