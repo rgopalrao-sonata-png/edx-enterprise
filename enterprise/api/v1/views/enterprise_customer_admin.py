@@ -12,6 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.shortcuts import get_object_or_404
 
 from enterprise import models, roles_api
@@ -27,6 +28,47 @@ from enterprise.constants import (
 logger = logging.getLogger(__name__)
 
 User = get_user_model()
+
+
+def get_enterprise_uuid_for_delete_admin(request, *args, **kwargs):
+    """
+    Helper function to extract enterprise_customer_uuid from customer_id.
+
+    This is used by the permission decorator to validate access based on the
+    enterprise customer UUID rather than the admin record ID.
+
+    Args:
+        request: The HTTP request object
+        args: Positional arguments
+        kwargs: Keyword arguments containing 'customer_id'
+
+    Returns:
+        str: The enterprise customer UUID if found, None otherwise
+    """
+    customer_id = kwargs.get('customer_id')
+    role = request.query_params.get('role') or request.data.get('role')
+
+    if not customer_id or not role:
+        return None
+
+    role = role.lower()
+
+    try:
+        if role == PENDING_ADMIN_ROLE_TYPE:
+            pending_admin = models.PendingEnterpriseCustomerAdminUser.objects.select_related(
+                'enterprise_customer'
+            ).get(id=int(customer_id))
+            return str(pending_admin.enterprise_customer.uuid)
+        elif role == ACTIVE_ADMIN_ROLE_TYPE:
+            enterprise_customer_user = models.EnterpriseCustomerUser.objects.select_related(
+                'enterprise_customer'
+            ).get(id=int(customer_id))
+            return str(enterprise_customer_user.enterprise_customer.uuid)
+    except (ValueError, TypeError, models.PendingEnterpriseCustomerAdminUser.DoesNotExist,
+            models.EnterpriseCustomerUser.DoesNotExist):
+        return None
+
+    return None
 
 
 class EnterpriseCustomerAdminPagination(PageNumberPagination):
@@ -171,7 +213,7 @@ class EnterpriseCustomerAdminViewSet(
 
     @permission_required(
         ENTERPRISE_CUSTOMER_PROVISIONING_ADMIN_ACCESS_PERMISSION,
-        fn=lambda request, *args, **kwargs: kwargs.get('customer_id'),
+        fn=get_enterprise_uuid_for_delete_admin,
     )
     @action(
         detail=False,
@@ -205,6 +247,15 @@ class EnterpriseCustomerAdminViewSet(
             400 BAD REQUEST if role parameter is missing or invalid
             404 NOT FOUND if the specified admin record doesn't exist
         """
+        # Validate customer_id is a valid integer
+        try:
+            customer_id_int = int(customer_id)
+        except (ValueError, TypeError):
+            return self._error_response(
+                'customer_id must be a valid integer',
+                status.HTTP_400_BAD_REQUEST
+            )
+
         role = request.query_params.get('role') or request.data.get('role')
 
         if not role:
@@ -216,9 +267,9 @@ class EnterpriseCustomerAdminViewSet(
         role = role.lower()
 
         if role == PENDING_ADMIN_ROLE_TYPE:
-            return self._delete_pending_admin(customer_id)
+            return self._delete_pending_admin(customer_id_int)
         elif role == ACTIVE_ADMIN_ROLE_TYPE:
-            return self._delete_active_admin(customer_id)
+            return self._delete_active_admin(customer_id_int)
         else:
             return self._error_response(
                 f'Invalid role. Must be "{PENDING_ADMIN_ROLE_TYPE}" or "{ACTIVE_ADMIN_ROLE_TYPE}"',
@@ -229,6 +280,7 @@ class EnterpriseCustomerAdminViewSet(
         """Helper method to create error responses."""
         return Response({'error': message}, status=status_code)
 
+    @transaction.atomic
     def _delete_pending_admin(self, customer_id):
         """
         Delete a pending admin invitation.
@@ -240,7 +292,9 @@ class EnterpriseCustomerAdminViewSet(
             Response object with success or error message
         """
         try:
-            pending_admin = models.PendingEnterpriseCustomerAdminUser.objects.get(id=customer_id)
+            pending_admin = models.PendingEnterpriseCustomerAdminUser.objects.select_related(
+                'enterprise_customer'
+            ).get(id=customer_id)
             enterprise_customer = pending_admin.enterprise_customer
             user_email = pending_admin.user_email
 
@@ -260,6 +314,7 @@ class EnterpriseCustomerAdminViewSet(
                 status.HTTP_404_NOT_FOUND
             )
 
+    @transaction.atomic
     def _delete_active_admin(self, customer_id):
         """
         Delete an active admin by removing their role assignment.
@@ -271,7 +326,9 @@ class EnterpriseCustomerAdminViewSet(
             Response object with success message and user_deactivated flag
         """
         try:
-            enterprise_customer_user = models.EnterpriseCustomerUser.objects.get(id=customer_id)
+            enterprise_customer_user = models.EnterpriseCustomerUser.objects.select_related(
+                'enterprise_customer', 'user'
+            ).get(id=customer_id)
         except models.EnterpriseCustomerUser.DoesNotExist:
             return self._error_response('Admin user not found', status.HTTP_404_NOT_FOUND)
 
@@ -306,8 +363,8 @@ class EnterpriseCustomerAdminViewSet(
             enterprise_customer.uuid
         )
 
-        # Check if user has other roles for this enterprise
-        has_other_roles = models.SystemWideEnterpriseUserRoleAssignment.objects.filter(
+        # Check if user has other roles for this enterprise with row-level locking to prevent race conditions
+        has_other_roles = models.SystemWideEnterpriseUserRoleAssignment.objects.select_for_update().filter(
             user=user,
             enterprise_customer=enterprise_customer,
         ).exists()
@@ -349,7 +406,7 @@ class EnterpriseCustomerAdminViewSet(
 
     @permission_required(
         ENTERPRISE_CUSTOMER_PROVISIONING_ADMIN_ACCESS_PERMISSION,
-        fn=lambda request, *args, **kwargs: request.data.get('enterprise_customer_uuid'),
+        fn=lambda request, *args, **kwargs: kwargs.get('enterprise_customer_uuid'),
     )
     @action(
         detail=False,
@@ -358,15 +415,20 @@ class EnterpriseCustomerAdminViewSet(
     )
     def invite_admins(self, request, **kwargs):
         """
-        Invite new admins to an Enterprise Customer by sending invitation emails.
+        Invite new admins to an Enterprise Customer by creating pending admin invitations.
+
+        URL Path Parameters:
+
+        - ``enterprise_customer_uuid``: UUID of the enterprise customer.
 
         Request data must include:
 
-        - emails: list of email addresses to invite
-        - enterprise_customer_uuid: UUID of the enterprise customer
+        - ``emails``: List of email addresses to invite.
 
         Returns:
-            A list of dicts with email and status for each attempted invite.
+            200 OK: A list of dicts with ``email`` and ``status`` for each attempted invite.
+            400 BAD REQUEST: If required input is missing or invalid.
+            404 NOT FOUND: If the enterprise customer does not exist.
         """
         enterprise_customer_uuid = kwargs.get("enterprise_customer_uuid")
         if not enterprise_customer_uuid:
