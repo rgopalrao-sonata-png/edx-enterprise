@@ -1,8 +1,11 @@
+
 """
 Views for `EnterpriseCustomerAdmin` model.
 """
+import logging
+
 from edx_rbac.decorators import permission_required
-from rest_framework import mixins, status, viewsets
+from rest_framework import mixins, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
@@ -12,8 +15,16 @@ from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
 
 from enterprise import models, roles_api
-from enterprise.api.v1.serializers import EnterpriseCustomerAdminSerializer
-from enterprise.constants import ENTERPRISE_ADMIN_ROLE, ENTERPRISE_CUSTOMER_PROVISIONING_ADMIN_ACCESS_PERMISSION
+from enterprise.api import utils as admin_utils
+from enterprise.api.v1.serializers import AdminInviteSerializer, EnterpriseCustomerAdminSerializer
+from enterprise.constants import (
+    ACTIVE_ADMIN_ROLE_TYPE,
+    ENTERPRISE_ADMIN_ROLE,
+    ENTERPRISE_CUSTOMER_PROVISIONING_ADMIN_ACCESS_PERMISSION,
+    PENDING_ADMIN_ROLE_TYPE,
+)
+
+logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
@@ -160,61 +171,263 @@ class EnterpriseCustomerAdminViewSet(
 
     @permission_required(
         ENTERPRISE_CUSTOMER_PROVISIONING_ADMIN_ACCESS_PERMISSION,
-        fn=lambda request, enterprise_customer_uuid, *args, **kwargs: enterprise_customer_uuid,
+        fn=lambda request, *args, **kwargs: kwargs.get('customer_id'),
     )
-    def delete_admin(self, request, enterprise_customer_uuid=None, admin_pk=None):
+    @action(
+        detail=False,
+        methods=['delete'],
+        url_path=r'(?P<customer_id>[^/.]+)/delete'
+    )
+    def delete_admin(self, request, customer_id=None):
         """
-        Soft delete an EnterpriseCustomerAdmin record.
-        DELETE /api/v1/enterprise-customer/{enterprise_customer_uuid}/admins/{admin_pk}/
+        Delete an admin record based on role.
 
-        The requesting user must have the ``enterprise_provisioning_admin``
-        role to access this endpoint.
+        DELETE /enterprise/api/v1/enterprise-customer-admin/{customer_id}/delete/?role=<role>
 
-        Removes the enterprise_admin role assignment and deactivates the
-        EnterpriseCustomerUser if the user has no other roles for the enterprise.
-        The ECA record itself is left untouched in the database.
+        Path Parameters:
+
+        - ``customer_id``: ID of the admin record to delete (PendingEnterpriseCustomerAdminUser ID
+          or EnterpriseCustomerUser ID)
+
+        Query Parameters:
+
+        - ``role``: Either 'pending' or 'admin' (required, case-insensitive)
+
+        Based on the role query parameter:
+
+        - If role='pending': Hard deletes PendingEnterpriseCustomerAdminUser where id=customer_id
+        - If role='admin': Deletes role assignment from SystemWideEnterpriseUserRoleAssignment
+          for the EnterpriseCustomerUser id=customer_id, and deactivates
+          EnterpriseCustomerUser if no other roles exist
+
+        Returns:
+            200 OK with success message and user_deactivated flag (for active admins)
+            400 BAD REQUEST if role parameter is missing or invalid
+            404 NOT FOUND if the specified admin record doesn't exist
         """
-        # Validate enterprise customer
+        role = request.query_params.get('role') or request.data.get('role')
+
+        if not role:
+            return self._error_response(
+                f'role parameter is required ({PENDING_ADMIN_ROLE_TYPE} or {ACTIVE_ADMIN_ROLE_TYPE})',
+                status.HTTP_400_BAD_REQUEST
+            )
+
+        role = role.lower()
+
+        if role == PENDING_ADMIN_ROLE_TYPE:
+            return self._delete_pending_admin(customer_id)
+        elif role == ACTIVE_ADMIN_ROLE_TYPE:
+            return self._delete_active_admin(customer_id)
+        else:
+            return self._error_response(
+                f'Invalid role. Must be "{PENDING_ADMIN_ROLE_TYPE}" or "{ACTIVE_ADMIN_ROLE_TYPE}"',
+                status.HTTP_400_BAD_REQUEST
+            )
+
+    def _error_response(self, message, status_code):
+        """Helper method to create error responses."""
+        return Response({'error': message}, status=status_code)
+
+    def _delete_pending_admin(self, customer_id):
+        """
+        Delete a pending admin invitation.
+
+        Args:
+            customer_id: ID of the PendingEnterpriseCustomerAdminUser record
+
+        Returns:
+            Response object with success or error message
+        """
         try:
-            enterprise_customer = models.EnterpriseCustomer.objects.get(uuid=enterprise_customer_uuid)
-        except models.EnterpriseCustomer.DoesNotExist:
+            pending_admin = models.PendingEnterpriseCustomerAdminUser.objects.get(id=customer_id)
+            enterprise_customer = pending_admin.enterprise_customer
+            user_email = pending_admin.user_email
+
+            pending_admin.delete()
+            logger.info(
+                "Hard deleted PendingEnterpriseCustomerAdminUser id=%s for enterprise %s",
+                customer_id,
+                enterprise_customer.uuid
+            )
             return Response(
-                {'error': f'EnterpriseCustomer with uuid {enterprise_customer_uuid} does not exist'},
-                status=status.HTTP_404_NOT_FOUND,
+                {'message': f'Pending admin invitation for {user_email} deleted successfully'},
+                status=status.HTTP_200_OK
+            )
+        except models.PendingEnterpriseCustomerAdminUser.DoesNotExist:
+            return self._error_response(
+                'Pending admin invitation not found',
+                status.HTTP_404_NOT_FOUND
             )
 
-        # Look up admin record
+    def _delete_active_admin(self, customer_id):
+        """
+        Delete an active admin by removing their role assignment.
+
+        Args:
+            customer_id: ID of the EnterpriseCustomerUser record
+
+        Returns:
+            Response object with success message and user_deactivated flag
+        """
         try:
-            admin = models.EnterpriseCustomerAdmin.objects.get(pk=admin_pk)
-        except models.EnterpriseCustomerAdmin.DoesNotExist:
-            return Response(
-                {'error': f'EnterpriseCustomerAdmin with id {admin_pk} does not exist'},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            enterprise_customer_user = models.EnterpriseCustomerUser.objects.get(id=customer_id)
+        except models.EnterpriseCustomerUser.DoesNotExist:
+            return self._error_response('Admin user not found', status.HTTP_404_NOT_FOUND)
 
-        # Verify admin belongs to the given enterprise customer
-        if admin.enterprise_customer_user.enterprise_customer_id != enterprise_customer.uuid:
-            return Response(
-                {'error': 'Admin does not belong to the specified enterprise customer'},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+        # Verify admin record exists
+        if not models.EnterpriseCustomerAdmin.objects.filter(
+            enterprise_customer_user=enterprise_customer_user
+        ).exists():
+            return self._error_response('Admin record not found', status.HTTP_404_NOT_FOUND)
 
-        # Remove enterprise_admin role
-        enterprise_customer_user = admin.enterprise_customer_user
+        enterprise_customer = enterprise_customer_user.enterprise_customer
         user = enterprise_customer_user.user
-        roles_api.delete_admin_role_assignment(user=user, enterprise_customer=enterprise_customer)
+
+        # Check if admin role assignment exists
+        role_assignment = models.SystemWideEnterpriseUserRoleAssignment.objects.filter(
+            user=user,
+            enterprise_customer=enterprise_customer,
+            role__name=ENTERPRISE_ADMIN_ROLE,
+        )
+
+        if not role_assignment.exists():
+            return self._error_response(
+                'Admin role assignment not found',
+                status.HTTP_404_NOT_FOUND
+            )
+
+        # Delete the admin role
+        deleted_count, _ = role_assignment.delete()
+        logger.info(
+            "Deleted %d admin role assignment(s) for user %s in enterprise %s",
+            deleted_count,
+            user.id,
+            enterprise_customer.uuid
+        )
 
         # Check if user has other roles for this enterprise
         has_other_roles = models.SystemWideEnterpriseUserRoleAssignment.objects.filter(
             user=user,
             enterprise_customer=enterprise_customer,
-        ).exclude(
-            role__name=ENTERPRISE_ADMIN_ROLE,
         ).exists()
 
-        # If no other roles, deactivate the EnterpriseCustomerUser
+        # Deactivate EnterpriseCustomerUser if no other roles exist (soft delete)
+        user_deactivated = False
         if not has_other_roles:
             enterprise_customer_user.active = False
             enterprise_customer_user.save(update_fields=['active', 'modified'])
+            user_deactivated = True
+            logger.info(
+                "Deactivated EnterpriseCustomerUser id=%s for user %s in enterprise %s (no other roles)",
+                enterprise_customer_user.id,
+                user.id,
+                enterprise_customer.uuid
+            )
+        else:
+            logger.info(
+                "Kept EnterpriseCustomerUser id=%s active for user %s (has other roles)",
+                enterprise_customer_user.id,
+                user.id
+            )
 
-        return Response(status=status.HTTP_200_OK)
+        # Create meaningful message with email
+        user_identifier = user.email or user.username
+        message = (
+            f'Admin {user_identifier} deleted successfully and user account deactivated'
+            if user_deactivated else
+            f'Admin {user_identifier} deleted successfully'
+        )
+
+        return Response(
+            {
+                'message': message,
+                'user_deactivated': user_deactivated
+            },
+            status=status.HTTP_200_OK
+        )
+
+    @permission_required(
+        ENTERPRISE_CUSTOMER_PROVISIONING_ADMIN_ACCESS_PERMISSION,
+        fn=lambda request, *args, **kwargs: request.data.get('enterprise_customer_uuid'),
+    )
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path=r"(?P<enterprise_customer_uuid>[0-9a-fA-F-]+)/admins/invite",
+    )
+    def invite_admins(self, request, **kwargs):
+        """
+        Invite new admins to an Enterprise Customer by sending invitation emails.
+
+        Request data must include:
+
+        - emails: list of email addresses to invite
+        - enterprise_customer_uuid: UUID of the enterprise customer
+
+        Returns:
+            A list of dicts with email and status for each attempted invite.
+        """
+        enterprise_customer_uuid = kwargs.get("enterprise_customer_uuid")
+        if not enterprise_customer_uuid:
+            logger.warning("Missing enterprise_customer_uuid in request URL/path.")
+            return Response({"detail": "Missing enterprise_customer_uuid."}, status=status.HTTP_400_BAD_REQUEST)
+
+        enterprise_customer = get_object_or_404(models.EnterpriseCustomer, uuid=enterprise_customer_uuid)
+        serializer = AdminInviteSerializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except serializers.ValidationError as e:
+            error_detail = e.detail
+            if 'emails' in error_detail:
+                logger.info(
+                    "No emails provided for enterprise customer: %s", enterprise_customer_uuid
+                )
+                # Show the custom error message from the serializer
+                return Response({"detail": error_detail['emails'][0]}, status=status.HTTP_400_BAD_REQUEST)
+            # Show the first error message for other fields
+            return Response({"detail": str(error_detail)}, status=status.HTTP_400_BAD_REQUEST)
+
+        normalized_emails = serializer.validated_data.get("emails", [])
+
+        logger.info(
+            "Inviting admins for enterprise customer: %s, emails: %s",
+            enterprise_customer_uuid,
+            normalized_emails,
+        )
+
+        # Batch prefetch to avoid N+1 queries
+        existing_admin_emails = admin_utils.get_existing_admin_emails(enterprise_customer)
+        existing_pending_emails = admin_utils.get_existing_pending_emails(enterprise_customer, normalized_emails)
+
+        new_invites = [
+            email for email in normalized_emails
+            if email not in existing_admin_emails and email not in existing_pending_emails
+        ]
+
+        if new_invites:
+            logger.info(
+                "Creating new pending invites for enterprise customer: %s, emails: %s",
+                enterprise_customer_uuid,
+                new_invites,
+            )
+            try:
+                admin_utils.create_pending_invites(enterprise_customer, new_invites)
+            except ValueError as e:
+                logger.error("Failed to create pending invites: %s", str(e))
+                return Response(
+                    {"detail": "Failed to create pending invites."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        response_data = []
+        for email in normalized_emails:
+            status_str = admin_utils.get_invite_status(email, existing_admin_emails, existing_pending_emails)
+            response_data.append({"email": email, "status": status_str})
+
+        logger.info(
+            "Invite response for enterprise customer: %s, response: %s",
+            enterprise_customer_uuid,
+            response_data,
+        )
+        return Response(response_data, status=status.HTTP_200_OK)
