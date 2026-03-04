@@ -8,16 +8,6 @@ from datetime import datetime
 from rest_framework import exceptions, permissions, viewsets
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
-from rest_framework.status import (
-    HTTP_200_OK,
-    HTTP_201_CREATED,
-    HTTP_202_ACCEPTED,
-    HTTP_400_BAD_REQUEST,
-    HTTP_404_NOT_FOUND,
-    HTTP_409_CONFLICT,
-    HTTP_422_UNPROCESSABLE_ENTITY,
-    HTTP_500_INTERNAL_SERVER_ERROR,
-)
 
 from django.db.models import DateTimeField
 from django.db.models.functions import Cast, Coalesce, Greatest

@@ -1,7 +1,7 @@
 """
 Viewsets related to the integrated_channels Degreed2 model
 """
-from rest_framework import exceptions, permissions, status, viewsets
+from rest_framework import permissions, viewsets
 
 from integrated_channels.api.v1.mixins import PermissionRequiredForIntegratedChannelMixin
 from integrated_channels.degreed2.models import Degreed2EnterpriseCustomerConfiguration

@@ -2400,7 +2400,7 @@ def batch_dict(dict_data, chunk_size=1):
         generator: iterates through each chunk of a dictionary
     """
     it = iter(dict_data.items())
-    for _ in range(0, len(dict_data), chunk_size):
+    for __ in range(0, len(dict_data), chunk_size):
         yield dict(islice(it, chunk_size))
 
 

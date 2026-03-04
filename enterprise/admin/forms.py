@@ -448,7 +448,7 @@ class EnterpriseCustomerCatalogAdminForm(forms.ModelForm):
         clicked_button_index_expression = re.compile(r'-(.+?)-')
         count = 0
         preview_button_index = None
-        for key, _ in post_data.items():
+        for key, __ in post_data.items():
             if preview_button_expression.match(key):
                 count += 1
                 preview_button_index = clicked_button_index_expression.search(key).group(1)
