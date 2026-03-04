@@ -275,6 +275,8 @@ class FulfillmentTypes:
     CHOICES = [(choice, choice.capitalize().replace('_', ' ')) for choice in (LICENSE, LEARNER_CREDIT, COUPON_CODE)]
 
 
+# Braze Campaign IDs
+# Note: These are reference values. Actual values must be configured in settings (per environment).
 SSO_BRAZE_CAMPAIGN_ID = 'a5f10d46-8093-4ce1-bab7-6df018d03660'
 
 # The maximum length of a text field in the database.

@@ -194,7 +194,7 @@ def send_sso_configured_email(
     }
 
     try:
-        # Assuming recipient and alias creation logic remains the same
+
         braze_client_instance = BrazeAPIClient()
         recipient = braze_client_instance.create_recipient_no_external_id(
             contact_email,
@@ -476,7 +476,6 @@ def send_enterprise_admin_invite_email(
     if not isinstance(recipient_emails, list):
         recipient_emails = [recipient_emails]
 
-    # braze_campaign_id = settings.BRAZE_GROUPS_EMAIL_AUTO_REMINDER_DAY_5_CAMPAIGN
     braze_trigger_properties = {
         'customer-slug': enterprise_slug,
         'enterprise_customer_name': enterprise_name,
@@ -487,7 +486,7 @@ def send_enterprise_admin_invite_email(
     # Validate required settings exist
     api_key = getattr(settings, 'ENTERPRISE_BRAZE_API_KEY', None)
     api_url = getattr(settings, 'EDX_BRAZE_API_SERVER', None)
-    braze_campaign_id = getattr(settings, 'BRAZE_ENTERPRISE_ADMIN_INVITE_EMAIL_CAMPAIGN_ID', None)
+    braze_campaign_id = getattr(settings, 'BRAZE_ADMIN_INVITE_CAMPAIGN_ID', None)
 
     if not api_key or not api_url:
         error_msg = (
@@ -499,7 +498,7 @@ def send_enterprise_admin_invite_email(
 
     if not braze_campaign_id:
         error_msg = (
-            "Missing BRAZE_ENTERPRISE_ADMIN_INVITE_EMAIL_CAMPAIGN_ID setting "
+            "Missing BRAZE_ADMIN_INVITE_CAMPAIGN_ID setting "
             "for admin invite email"
         )
         LOGGER.error(error_msg)
@@ -510,7 +509,7 @@ def send_enterprise_admin_invite_email(
             api_key=api_key,
             api_url=api_url
         )
-        # Log count only, not email addresses (privacy/GDPR concern)
+        # Log count only, not email addresses (privacy concern)
         LOGGER.info(
             "Sending enterprise admin invite email to %d recipients for enterprise %s.",
             len(recipient_emails),

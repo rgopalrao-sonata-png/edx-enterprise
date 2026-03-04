@@ -79,7 +79,7 @@ class TestEnterpriseTasks(unittest.TestCase):
         # Mock settings
         mock_settings.ENTERPRISE_BRAZE_API_KEY = 'test-api-key'
         mock_settings.EDX_BRAZE_API_SERVER = 'https://rest.iad-01.braze.com'
-        mock_settings.BRAZE_ENTERPRISE_ADMIN_INVITE_EMAIL_CAMPAIGN_ID = 'campaign-id'
+        mock_settings.BRAZE_ADMIN_INVITE_CAMPAIGN_ID = '78a9d9be-daf8-4ace-ae6c-c0e79548f009'
 
         send_enterprise_admin_invite_email(  # pylint: disable=no-value-for-parameter
             'uuid', 'admin@example.com'
@@ -109,7 +109,7 @@ class TestEnterpriseTasks(unittest.TestCase):
         # Mock settings
         mock_settings.ENTERPRISE_BRAZE_API_KEY = 'test-api-key'
         mock_settings.EDX_BRAZE_API_SERVER = 'https://rest.iad-01.braze.com'
-        mock_settings.BRAZE_ENTERPRISE_ADMIN_INVITE_EMAIL_CAMPAIGN_ID = 'campaign-id'
+        mock_settings.BRAZE_ADMIN_INVITE_CAMPAIGN_ID = '78a9d9be-daf8-4ace-ae6c-c0e79548f009'
 
         # Mock the task's request object for retry mechanism
         task = send_enterprise_admin_invite_email
@@ -140,7 +140,6 @@ class TestEnterpriseTasks(unittest.TestCase):
         # Mock missing API key
         mock_settings.ENTERPRISE_BRAZE_API_KEY = None
         mock_settings.EDX_BRAZE_API_SERVER = 'https://rest.iad-01.braze.com'
-        mock_settings.BRAZE_ENTERPRISE_ADMIN_INVITE_EMAIL_CAMPAIGN_ID = 'campaign-id'
 
         with self.assertRaises(ValueError) as context:
             send_enterprise_admin_invite_email(  # pylint: disable=no-value-for-parameter
@@ -166,7 +165,6 @@ class TestEnterpriseTasks(unittest.TestCase):
         # Mock missing API URL
         mock_settings.ENTERPRISE_BRAZE_API_KEY = 'test-api-key'
         mock_settings.EDX_BRAZE_API_SERVER = None
-        mock_settings.BRAZE_ENTERPRISE_ADMIN_INVITE_EMAIL_CAMPAIGN_ID = 'campaign-id'
 
         with self.assertRaises(ValueError) as context:
             send_enterprise_admin_invite_email(  # pylint: disable=no-value-for-parameter
@@ -191,17 +189,17 @@ class TestEnterpriseTasks(unittest.TestCase):
         mock_customer.sender_alias = 'alias'
         mock_get_customer.return_value = mock_customer
 
-        # Mock missing campaign ID
+        # Mock settings - campaign ID is None
         mock_settings.ENTERPRISE_BRAZE_API_KEY = 'test-api-key'
         mock_settings.EDX_BRAZE_API_SERVER = 'https://rest.iad-01.braze.com'
-        mock_settings.BRAZE_ENTERPRISE_ADMIN_INVITE_EMAIL_CAMPAIGN_ID = None
+        mock_settings.BRAZE_ADMIN_INVITE_CAMPAIGN_ID = None
 
         with self.assertRaises(ValueError) as context:
             send_enterprise_admin_invite_email(  # pylint: disable=no-value-for-parameter
                 'uuid', 'admin@example.com'
             )
 
-        self.assertIn('Missing BRAZE_ENTERPRISE_ADMIN_INVITE_EMAIL_CAMPAIGN_ID', str(context.exception))
+        self.assertIn('Missing BRAZE_ADMIN_INVITE_CAMPAIGN_ID', str(context.exception))
         mock_logger.error.assert_called_once()
 
     @mock.patch('enterprise.models.EnterpriseCustomer.catalog_contains_course')
