@@ -375,6 +375,19 @@ class TestDeleteAdminEndpoint(APITest):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('Invalid role', response.data['error'])
 
+    def test_delete_admin_invalid_customer_id(self):
+        """
+        Test that DELETE request fails when customer_id is not a valid integer.
+        """
+        self.set_jwt_cookie(SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, ALL_ACCESS_CONTEXT)
+        invalid_url = reverse(
+            'enterprise-customer-admin-delete-admin',
+            kwargs={'customer_id': 'not-an-integer'},
+        )
+        response = self.client.delete(f'{invalid_url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('customer_id must be a valid integer', response.data['error'])
+
     def test_soft_delete_success(self):
         """
         Test that DELETE with role=admin removes the admin role, deactivates the ECU
