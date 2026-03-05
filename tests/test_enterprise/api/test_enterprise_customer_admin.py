@@ -865,7 +865,7 @@ class TestInviteAdminsEndpoint(APITest):
     def setUp(self):
         super().setUp()
         self.enterprise_customer = EnterpriseCustomerFactory()
-        self.admin_user = UserFactory(email='admin@example.com')
+        self.admin_user = UserFactory(email='admin@example.com', is_active=True)
         self.enterprise_customer_user = EnterpriseCustomerUserFactory(
             user_id=self.admin_user.id,
             enterprise_customer=self.enterprise_customer
