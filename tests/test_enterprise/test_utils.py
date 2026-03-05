@@ -924,12 +924,14 @@ class TestAdminInviteUtils(TestCase):
         assert set(args[1]) == set(emails)
 
     def test_create_pending_invites_requires_atomic(self):
-        """Test create_pending_invites requires an active transaction."""
-        with pytest.raises(RuntimeError):
-            utils.create_pending_invites(
-                self.enterprise_customer,
-                ["invite1@example.com"]
-            )
+        """Test create_pending_invites raises when no active transaction exists."""
+        with patch("enterprise.api.utils.transaction.get_connection") as mock_get_connection:
+            mock_get_connection.return_value.in_atomic_block = False
+            with pytest.raises(RuntimeError):
+                utils.create_pending_invites(
+                    self.enterprise_customer,
+                    ["invite1@example.com"]
+                )
 
     def test_get_invite_status(self):
         """Test retrieval of invite status for emails."""
