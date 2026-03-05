@@ -2423,6 +2423,7 @@ class AdminInviteSerializer(serializers.Serializer):
         required=True,
         error_messages={
             "required": "The 'emails' field is required.",
+            "empty": "The 'emails' field is required.",
         },
     )
 
