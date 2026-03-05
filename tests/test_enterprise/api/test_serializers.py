@@ -1212,12 +1212,14 @@ class TestAdminInviteSerializer(TestCase):
         serializer = AdminInviteSerializer(data={})
         assert not serializer.is_valid()
         assert "emails" in serializer.errors
+        assert serializer.errors["emails"][0] == "The 'emails' field is required."
 
     def test_empty_emails_list(self):
         """Test that empty emails list fails validation."""
         serializer = AdminInviteSerializer(data={"emails": []})
         assert not serializer.is_valid()
         assert "emails" in serializer.errors
+        assert serializer.errors["emails"][0] == "The 'emails' field is required."
 
     def test_invalid_email_format(self):
         """Test that invalid email format is rejected."""

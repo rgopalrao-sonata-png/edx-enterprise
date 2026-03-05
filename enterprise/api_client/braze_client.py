@@ -6,7 +6,7 @@ import logging
 from typing import Any, Dict, List, Optional, Union
 
 import requests
-from braze.constants import BrazeAPIEndpoints
+from enterprise.constants import BrazeAPIEndpoints
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
