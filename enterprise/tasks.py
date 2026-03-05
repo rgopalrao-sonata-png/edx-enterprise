@@ -1,6 +1,7 @@
 """
 Django tasks.
 """
+
 from logging import getLogger
 
 from celery import shared_task
@@ -13,18 +14,18 @@ from django.db import IntegrityError
 
 from enterprise import constants
 from enterprise.api_client.braze import ENTERPRISE_BRAZE_ALIAS_LABEL, MAX_NUM_IDENTIFY_USERS_ALIASES, BrazeAPIClient
-# SimplifiedBrazeClient is used for campaign-based emails (admin invites)
-# BrazeAPIClient (above) is used for user identification and attribute updates
 from enterprise.api_client.braze_client import BrazeAPIClient as SimplifiedBrazeClient
-from enterprise.api_client.braze_client import BrazeClientError
+from enterprise.api_client.braze_client import BrazeClientError as SimplifiedBrazeClientError
 from enterprise.api_client.enterprise_catalog import EnterpriseCatalogApiClient
 from enterprise.constants import SSO_BRAZE_CAMPAIGN_ID
 from enterprise.utils import batch_dict, get_enterprise_customer, localized_utcnow, send_email_notification_message
 
-# Alias for test mocking compatibility
-braze_client_module = SimplifiedBrazeClient
-
 LOGGER = getLogger(__name__)
+
+try:
+    from braze.exceptions import BrazeClientError
+except ImportError:
+    BrazeClientError = Exception
 
 
 @shared_task
@@ -154,7 +155,6 @@ def enterprise_group_membership_model():
 def enterprise_course_enrollment_model():
     """
     Returns the ``EnterpriseCourseEnrollment`` class.
-
     This function is needed to avoid circular ref issues when model classes call tasks in this module.
     """
     return apps.get_model('enterprise', 'EnterpriseCourseEnrollment')
@@ -194,7 +194,6 @@ def send_sso_configured_email(
     }
 
     try:
-
         braze_client_instance = BrazeAPIClient()
         recipient = braze_client_instance.create_recipient_no_external_id(
             contact_email,
@@ -466,7 +465,7 @@ def send_enterprise_admin_invite_email(
         - Retry delays: 60s, 120s, 240s
 
     Raises:
-        BrazeClientError: If Braze API fails after all retries
+        SimplifiedBrazeClientError: If Braze API fails after all retries
     """
 
     enterprise_customer = get_enterprise_customer(enterprise_customer_uuid)
@@ -505,7 +504,7 @@ def send_enterprise_admin_invite_email(
         raise ValueError(error_msg)
 
     try:
-        braze_client_instance = braze_client_module(
+        braze_client_instance = SimplifiedBrazeClient(
             api_key=api_key,
             api_url=api_url
         )
@@ -525,7 +524,7 @@ def send_enterprise_admin_invite_email(
             len(recipient_emails),
             enterprise_slug
         )
-    except BrazeClientError as exc:
+    except SimplifiedBrazeClientError as exc:
         message = (
             f'Failed to send enterprise admin invite email to {len(recipient_emails)} recipients '
             f'for enterprise: {enterprise_name}. '

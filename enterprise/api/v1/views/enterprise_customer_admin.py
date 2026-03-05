@@ -445,9 +445,8 @@ class EnterpriseCustomerAdminViewSet(
         normalized_emails = serializer.validated_data.get("emails", [])
 
         logger.info(
-            "Inviting admins for enterprise customer: %s, emails: %s",
-            enterprise_customer_uuid,
-            normalized_emails,
+            "Inviting admins for enterprise customer: %s",
+            enterprise_customer_uuid
         )
 
         # Batch prefetch to avoid N+1 queries
@@ -461,9 +460,9 @@ class EnterpriseCustomerAdminViewSet(
 
         if new_invites:
             logger.info(
-                "Creating new pending invites for enterprise customer: %s, emails: %s",
+                "Creating %d new pending invites for enterprise customer: %s",
+                len(new_invites),
                 enterprise_customer_uuid,
-                new_invites,
             )
             try:
                 admin_utils.create_pending_invites(enterprise_customer, new_invites)
@@ -480,8 +479,8 @@ class EnterpriseCustomerAdminViewSet(
             response_data.append({"email": email, "status": status_str})
 
         logger.info(
-            "Invite response for enterprise customer: %s, response: %s",
+            "Invite response for enterprise customer: %s, total invites: %d",
             enterprise_customer_uuid,
-            response_data,
+            len(response_data),
         )
         return Response(response_data, status=status.HTTP_200_OK)

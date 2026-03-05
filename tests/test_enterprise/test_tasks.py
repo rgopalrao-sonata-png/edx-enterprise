@@ -11,7 +11,7 @@ from unittest import mock
 from pytest import mark, raises
 
 from enterprise.api_client.braze import ENTERPRISE_BRAZE_ALIAS_LABEL
-from enterprise.api_client.braze_client import BrazeClientError
+from enterprise.api_client.braze_client import BrazeClientError as SimplifiedBrazeClientError
 from enterprise.constants import SSO_BRAZE_CAMPAIGN_ID
 from enterprise.models import EnterpriseCourseEnrollment, EnterpriseEnrollmentSource, EnterpriseGroupMembership
 from enterprise.settings.test import BRAZE_GROUPS_INVITATION_EMAIL_CAMPAIGN_ID, BRAZE_GROUPS_REMOVAL_EMAIL_CAMPAIGN_ID
@@ -95,7 +95,7 @@ class TestEnterpriseTasks(unittest.TestCase):
         self, mock_logger, mock_get_customer, mock_braze_client, mock_settings
     ):
         """
-        Test send_enterprise_admin_invite_email logs and raises BrazeClientError.
+        Test send_enterprise_admin_invite_email logs and raises SimplifiedBrazeClientError.
         """
         mock_customer = mock.Mock()
         mock_customer.slug = 'slug'
@@ -104,7 +104,7 @@ class TestEnterpriseTasks(unittest.TestCase):
         mock_get_customer.return_value = mock_customer
         mock_braze_instance = mock.Mock()
         mock_braze_client.return_value = mock_braze_instance
-        mock_braze_instance.send_campaign_message.side_effect = BrazeClientError('fail')
+        mock_braze_instance.send_campaign_message.side_effect = SimplifiedBrazeClientError('fail')
 
         # Mock settings
         mock_settings.ENTERPRISE_BRAZE_API_KEY = 'test-api-key'
@@ -118,7 +118,7 @@ class TestEnterpriseTasks(unittest.TestCase):
 
         # Mock retry to raise MaxRetriesExceededError
         with mock.patch.object(task, 'retry', side_effect=task.MaxRetriesExceededError()):
-            with self.assertRaises(BrazeClientError):
+            with self.assertRaises(SimplifiedBrazeClientError):
                 task('uuid', 'admin@example.com')  # pylint: disable=no-value-for-parameter
 
         # Verify exception was logged (called at least once)

@@ -36,13 +36,14 @@ logger = logging.getLogger(__name__)
 
 def get_existing_admin_emails(enterprise_customer: EnterpriseCustomer) -> Set[str]:
     """
-    Retrieve normalized email addresses of existing enterprise admins.
+    Retrieve normalized email addresses of existing active enterprise admins.
 
     Args:
         enterprise_customer: The enterprise customer instance.
 
     Returns:
-        Set of lowercased email addresses.
+        Set of lowercased email addresses for active admins only.
+        Excludes soft-deleted EnterpriseCustomerUsers and inactive Users.
 
     Raises:
         DatabaseError: If database query fails.
@@ -55,7 +56,9 @@ def get_existing_admin_emails(enterprise_customer: EnterpriseCustomer) -> Set[st
     try:
         return set(
             EnterpriseCustomerAdmin.objects.filter(
-                enterprise_customer_user__enterprise_customer=enterprise_customer
+                enterprise_customer_user__enterprise_customer=enterprise_customer,
+                enterprise_customer_user__active=True,
+                enterprise_customer_user__user_fk__is_active=True,
             )
             .annotate(email_l=Lower(F("enterprise_customer_user__user_fk__email")))
             .values_list("email_l", flat=True)
@@ -131,8 +134,8 @@ def create_pending_invites(
 
     Note:
         - Must be called within a database transaction context
-        - Uses bulk_create with ignore_conflicts=True to handle race conditions
-        - Emails are sent after the outer transaction commits to ensure data consistency
+        - Fetches existing pending emails first to avoid race conditions
+        - Emails are sent only for newly-created records
         - All operations are wrapped in atomic transaction
 
     Example:
@@ -144,21 +147,34 @@ def create_pending_invites(
         raise ValueError("emails_to_invite cannot be empty")
 
     try:
-        # bulk_create returns empty list with ignore_conflicts=True,
-        # so we need to fetch the created records
-        PendingEnterpriseCustomerAdminUser.objects.bulk_create(
-            [
-                PendingEnterpriseCustomerAdminUser(
-                    enterprise_customer=enterprise_customer,
-                    user_email=email,
-                )
-                for email in emails_to_invite
-            ],
-            ignore_conflicts=True
+        # First, fetch existing pending invites within the same transaction
+        # to avoid race conditions with concurrent requests
+        existing_pending_emails = get_existing_pending_emails(
+            enterprise_customer,
+            emails_to_invite
         )
 
-        # Fetch the actual created/existing records
-        created_invites = list(
+        # Filter to only truly new emails (not already pending)
+        new_emails = [
+            email for email in emails_to_invite
+            if email not in existing_pending_emails
+        ]
+
+        # Only create records for emails that don't already have pending invites
+        if new_emails:
+            PendingEnterpriseCustomerAdminUser.objects.bulk_create(
+                [
+                    PendingEnterpriseCustomerAdminUser(
+                        enterprise_customer=enterprise_customer,
+                        user_email=email,
+                    )
+                    for email in new_emails
+                ],
+                ignore_conflicts=True
+            )
+
+        # Fetch all invites (both newly created and pre-existing)
+        all_invites = list(
             PendingEnterpriseCustomerAdminUser.objects.filter(
                 enterprise_customer=enterprise_customer,
                 user_email__in=emails_to_invite
@@ -166,15 +182,15 @@ def create_pending_invites(
         )
 
         def _enqueue_email_jobs():
-            # Send invite email to all emails in one call
-            if created_invites:
+            # Send invite email ONLY to newly created invites to avoid duplicate sends
+            if new_emails:
                 send_enterprise_admin_invite_email.delay(
                     str(enterprise_customer.uuid),
-                    [invite.user_email for invite in created_invites]
+                    new_emails
                 )
 
         transaction.on_commit(_enqueue_email_jobs)
-        return created_invites
+        return all_invites
     except DatabaseError:
         logger.exception(
             "Database error creating pending invites for enterprise customer: %s",
