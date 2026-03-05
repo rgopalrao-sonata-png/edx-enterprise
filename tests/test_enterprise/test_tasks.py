@@ -13,6 +13,11 @@ from pytest import mark, raises
 from enterprise.api_client.braze import ENTERPRISE_BRAZE_ALIAS_LABEL
 from enterprise.api_client.braze_client import BrazeClientError as SimplifiedBrazeClientError
 from enterprise.constants import SSO_BRAZE_CAMPAIGN_ID
+
+try:
+    from braze.exceptions import BrazeClientError
+except ImportError:
+    BrazeClientError = Exception
 from enterprise.models import EnterpriseCourseEnrollment, EnterpriseEnrollmentSource, EnterpriseGroupMembership
 from enterprise.settings.test import BRAZE_GROUPS_INVITATION_EMAIL_CAMPAIGN_ID, BRAZE_GROUPS_REMOVAL_EMAIL_CAMPAIGN_ID
 from enterprise.tasks import (
