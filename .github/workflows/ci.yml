@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [master,PR-CHEKS]
   pull_request:
 
 concurrency:
