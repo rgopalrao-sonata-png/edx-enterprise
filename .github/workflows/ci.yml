@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [master,rgoplarao/PR-initialcheck]
   pull_request:
 
 concurrency:
