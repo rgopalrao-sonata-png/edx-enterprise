@@ -27,6 +27,9 @@ try:
 except ImportError:
     BrazeClientError = Exception
 
+# Alias for test mocking compatibility
+braze_client_module = SimplifiedBrazeClient
+
 
 @shared_task
 @set_code_owner_attribute
@@ -504,7 +507,7 @@ def send_enterprise_admin_invite_email(
         raise ValueError(error_msg)
 
     try:
-        braze_client_instance = SimplifiedBrazeClient(
+        braze_client_instance = braze_client_module(
             api_key=api_key,
             api_url=api_url
         )
