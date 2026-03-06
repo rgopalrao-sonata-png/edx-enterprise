@@ -4,8 +4,9 @@ Tests for EnterpriseCustomerAdmin API endpoints, including invite_admins.
 """
 # --- Invite Admins Endpoint Tests ---
 
-import ddt
 from unittest import mock
+
+import ddt
 from edx_rbac.constants import ALL_ACCESS_CONTEXT
 from rest_framework import status
 from rest_framework.test import APITestCase
