@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master,rgopalrao/ENT-11555_Learner_admin]
+    branches: [master]
   pull_request:
 
 concurrency:
