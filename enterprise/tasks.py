@@ -17,7 +17,11 @@ from enterprise.api_client.braze import ENTERPRISE_BRAZE_ALIAS_LABEL, MAX_NUM_ID
 from enterprise.api_client.braze_client import BrazeCampaignAPIClient
 from enterprise.api_client.braze_client import BrazeClientError as CampaignBrazeClientError
 from enterprise.api_client.enterprise_catalog import EnterpriseCatalogApiClient
-from enterprise.constants import SSO_BRAZE_CAMPAIGN_ID
+from enterprise.constants import (
+    BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING,
+    BRAZE_LEARNER_INVITE_CAMPAIGN_SETTING,
+    SSO_BRAZE_CAMPAIGN_ID,
+)
 from enterprise.utils import batch_dict, get_enterprise_customer, localized_utcnow, send_email_notification_message
 
 LOGGER = getLogger(__name__)
@@ -237,6 +241,7 @@ def send_enterprise_admin_invite_email(
     self,
     enterprise_customer_uuid,
     recipient_emails,
+    campaign_setting_name,
 ):
     """
     Send invitation emails to new enterprise admins using Braze.
@@ -245,6 +250,7 @@ def send_enterprise_admin_invite_email(
         self: Celery task instance (required for retry)
         enterprise_customer_uuid (UUID): The UUID of the enterprise customer.
         recipient_emails (list or str): Email(s) of the recipients to invite as admins.
+        campaign_setting_name (str): Name of the Braze campaign ID setting to use.
 
     This task constructs the required Braze campaign properties and triggers the
     Braze campaign to send admin invite emails. If a single email is provided,
@@ -275,7 +281,7 @@ def send_enterprise_admin_invite_email(
 
     api_key = getattr(settings, 'ENTERPRISE_BRAZE_API_KEY', None)
     api_url = getattr(settings, 'EDX_BRAZE_API_SERVER', None)
-    braze_campaign_id = getattr(settings, 'BRAZE_ADMIN_INVITE_CAMPAIGN_ID', None)
+    braze_campaign_id = getattr(settings, campaign_setting_name, None)
 
     if not api_key or not api_url:
         error_msg = (
@@ -287,8 +293,8 @@ def send_enterprise_admin_invite_email(
 
     if not braze_campaign_id:
         error_msg = (
-            "Missing BRAZE_ADMIN_INVITE_CAMPAIGN_ID setting "
-            "for admin invite email"
+            f"Missing {campaign_setting_name} setting "
+            f"for admin invite email"
         )
         LOGGER.error(error_msg)
         raise ValueError(error_msg)
