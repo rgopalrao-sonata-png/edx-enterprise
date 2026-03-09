@@ -1005,7 +1005,7 @@ class TestAdminInviteUtils(TestCase):
         # Invite both an existing learner and a completely new email
         new_admin_email = "newadmin@example.com"
         emails = [learner_email, new_admin_email]
-        
+
         with transaction.atomic():
             created_invites = utils.create_pending_invites(
                 self.enterprise_customer,
@@ -1014,19 +1014,19 @@ class TestAdminInviteUtils(TestCase):
 
         # Should have created 2 pending invites
         assert len(created_invites) == 2
-        
+
         # Should have made 2 separate calls: one for learner campaign, one for admin campaign
         assert mock_delay.call_count == 2
-        
+
         # Verify the learner campaign call
-        learner_call = [call for call in mock_delay.call_args_list 
+        learner_call = [call for call in mock_delay.call_args_list
                        if call[1].get('campaign_setting_name') == BRAZE_LEARNER_INVITE_CAMPAIGN_SETTING]
         assert len(learner_call) == 1
         assert learner_call[0][0][0] == str(self.enterprise_customer.uuid)
         assert learner_call[0][0][1] == [learner_email]
-        
+
         # Verify the admin campaign call (explicit campaign_setting_name)
-        admin_call = [call for call in mock_delay.call_args_list 
+        admin_call = [call for call in mock_delay.call_args_list
                      if call[1].get('campaign_setting_name') == BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING]
         assert len(admin_call) == 1
         assert admin_call[0][0][0] == str(self.enterprise_customer.uuid)
@@ -1055,7 +1055,7 @@ class TestAdminInviteUtils(TestCase):
 
         # Should have created 1 pending invite
         assert len(created_invites) == 1
-        
+
         # Should have made 1 call with ADMIN campaign (not learner)
         # because user is inactive
         assert mock_delay.call_count == 1

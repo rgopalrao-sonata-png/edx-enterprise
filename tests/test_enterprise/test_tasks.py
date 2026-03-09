@@ -226,7 +226,7 @@ class TestEnterpriseTasks(unittest.TestCase):
     @mock.patch('enterprise.tasks.get_enterprise_customer')
     @mock.patch('enterprise.tasks.LOGGER')
     def test_send_enterprise_admin_invite_email_uses_learner_campaign(
-        self, mock_logger, mock_get_customer, mock_braze_client, mock_settings
+        self, _mock_logger, mock_get_customer, mock_braze_client, mock_settings
     ):
         """
         Test send_enterprise_admin_invite_email uses learner campaign when specified.
@@ -266,7 +266,7 @@ class TestEnterpriseTasks(unittest.TestCase):
     @mock.patch('enterprise.tasks.get_enterprise_customer')
     @mock.patch('enterprise.tasks.LOGGER')
     def test_send_enterprise_admin_invite_email_raises_error_when_learner_campaign_missing(
-        self, mock_logger, mock_get_customer, mock_braze_client, mock_settings
+        self, mock_logger, mock_get_customer, _mock_braze_client, mock_settings
     ):
         """
         Test send_enterprise_admin_invite_email raises ValueError when learner campaign is not configured.
