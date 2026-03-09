@@ -14,6 +14,7 @@ from enterprise.api_client.braze_client import BrazeClientError, BrazeValidation
 # Initialization Tests
 # ============================================================================
 
+
 class TestBrazeClientInitialization:
     """Test cases for BrazeAPIClient initialization."""
 

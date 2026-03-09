@@ -1020,14 +1020,14 @@ class TestAdminInviteUtils(TestCase):
 
         # Verify the learner campaign call
         learner_call = [call for call in mock_delay.call_args_list
-                       if call[1].get('campaign_setting_name') == BRAZE_LEARNER_INVITE_CAMPAIGN_SETTING]
+                        if call[1].get('campaign_setting_name') == BRAZE_LEARNER_INVITE_CAMPAIGN_SETTING]
         assert len(learner_call) == 1
         assert learner_call[0][0][0] == str(self.enterprise_customer.uuid)
         assert learner_call[0][0][1] == [learner_email]
 
         # Verify the admin campaign call (explicit campaign_setting_name)
         admin_call = [call for call in mock_delay.call_args_list
-                     if call[1].get('campaign_setting_name') == BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING]
+                      if call[1].get('campaign_setting_name') == BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING]
         assert len(admin_call) == 1
         assert admin_call[0][0][0] == str(self.enterprise_customer.uuid)
         assert admin_call[0][0][1] == [new_admin_email]
