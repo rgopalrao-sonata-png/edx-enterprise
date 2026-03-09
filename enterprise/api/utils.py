@@ -166,7 +166,7 @@ def create_pending_invites(
                 return
 
             created_invite_emails = [invite.user_email for invite in created_invites]
-            
+
             # Query existing ACTIVE EnterpriseCustomerUsers (with active auth_user accounts)
             # Only send learner campaign to users with active accounts
             existing_ecu_emails = set(
@@ -178,7 +178,7 @@ def create_pending_invites(
                     user_fk__is_active=True  # Only include active users
                 ).values_list('user_fk__email', flat=True)
             )
-            
+
             # Split emails in a single pass for efficiency
             learner_emails = []
             new_admin_emails = []
@@ -187,7 +187,7 @@ def create_pending_invites(
                     learner_emails.append(email)
                 else:
                     new_admin_emails.append(email)
-            
+
             # Send to existing learners with learner campaign
             if learner_emails:
                 send_enterprise_admin_invite_email.delay(
@@ -195,7 +195,7 @@ def create_pending_invites(
                     learner_emails,
                     campaign_setting_name=BRAZE_LEARNER_INVITE_CAMPAIGN_SETTING
                 )
-            
+
             # Send to new admins with admin campaign
             if new_admin_emails:
                 send_enterprise_admin_invite_email.delay(
@@ -206,7 +206,7 @@ def create_pending_invites(
 
         transaction.on_commit(_enqueue_email_jobs)
         return created_invites
-        
+
     except DatabaseError:
         logger.exception(
             "Database error creating pending invites for enterprise customer: %s",

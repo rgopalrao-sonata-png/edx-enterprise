@@ -17,11 +17,7 @@ from enterprise.api_client.braze import ENTERPRISE_BRAZE_ALIAS_LABEL, MAX_NUM_ID
 from enterprise.api_client.braze_client import BrazeCampaignAPIClient
 from enterprise.api_client.braze_client import BrazeClientError as CampaignBrazeClientError
 from enterprise.api_client.enterprise_catalog import EnterpriseCatalogApiClient
-from enterprise.constants import (
-    BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING,
-    BRAZE_LEARNER_INVITE_CAMPAIGN_SETTING,
-    SSO_BRAZE_CAMPAIGN_ID,
-)
+from enterprise.constants import SSO_BRAZE_CAMPAIGN_ID
 from enterprise.utils import batch_dict, get_enterprise_customer, localized_utcnow, send_email_notification_message
 
 LOGGER = getLogger(__name__)
