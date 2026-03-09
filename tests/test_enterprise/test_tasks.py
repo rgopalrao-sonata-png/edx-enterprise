@@ -12,7 +12,11 @@ from pytest import mark, raises
 
 from enterprise.api_client.braze import ENTERPRISE_BRAZE_ALIAS_LABEL
 from enterprise.api_client.braze_client import BrazeClientError as CampaignBrazeClientError
-from enterprise.constants import SSO_BRAZE_CAMPAIGN_ID
+from enterprise.constants import (
+    BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING,
+    BRAZE_LEARNER_INVITE_CAMPAIGN_SETTING,
+    SSO_BRAZE_CAMPAIGN_ID,
+)
 from enterprise.models import EnterpriseCourseEnrollment, EnterpriseEnrollmentSource, EnterpriseGroupMembership
 from enterprise.settings.test import BRAZE_GROUPS_INVITATION_EMAIL_CAMPAIGN_ID, BRAZE_GROUPS_REMOVAL_EMAIL_CAMPAIGN_ID
 from enterprise.tasks import (
@@ -87,7 +91,9 @@ class TestEnterpriseTasks(unittest.TestCase):
         mock_settings.BRAZE_ADMIN_INVITE_CAMPAIGN_ID = '78a9d9be-daf8-4ace-ae6c-c0e79548f009'
 
         send_enterprise_admin_invite_email(  # pylint: disable=no-value-for-parameter
-            'uuid', 'admin@example.com'
+            str(self.enterprise_customer.uuid),
+            'admin@example.com',
+            BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING
         )
         mock_logger.info.assert_called()
         mock_braze_instance.send_campaign_message.assert_called_once_with(
@@ -130,7 +136,7 @@ class TestEnterpriseTasks(unittest.TestCase):
 
         with mock.patch.object(task, 'retry', side_effect=task.MaxRetriesExceededError()):
             with self.assertRaises(CampaignBrazeClientError):
-                task('uuid', 'admin@example.com')  # pylint: disable=no-value-for-parameter
+                task('uuid', 'admin@example.com', BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING)  # pylint: disable=no-value-for-parameter
 
         assert mock_logger.exception.called
 
@@ -152,7 +158,9 @@ class TestEnterpriseTasks(unittest.TestCase):
 
         with self.assertRaises(ValueError) as context:
             send_enterprise_admin_invite_email(  # pylint: disable=no-value-for-parameter
-                'uuid', 'admin@example.com'
+                'uuid',
+                'admin@example.com',
+                BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING
             )
 
         self.assertIn('Missing required Braze settings', str(context.exception))
@@ -176,7 +184,9 @@ class TestEnterpriseTasks(unittest.TestCase):
 
         with self.assertRaises(ValueError) as context:
             send_enterprise_admin_invite_email(  # pylint: disable=no-value-for-parameter
-                'uuid', 'admin@example.com'
+                'uuid',
+                'admin@example.com',
+                BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING
             )
 
         self.assertIn('Missing required Braze settings', str(context.exception))
@@ -203,11 +213,84 @@ class TestEnterpriseTasks(unittest.TestCase):
 
         with self.assertRaises(ValueError) as context:
             send_enterprise_admin_invite_email(  # pylint: disable=no-value-for-parameter
-                'uuid', 'admin@example.com'
+                'uuid',
+                'admin@example.com',
+                BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING
             )
 
         self.assertIn('Missing BRAZE_ADMIN_INVITE_CAMPAIGN_ID', str(context.exception))
         mock_logger.error.assert_called_once()
+
+    @mock.patch('enterprise.tasks.settings')
+    @mock.patch('enterprise.tasks.braze_client_module')
+    @mock.patch('enterprise.tasks.get_enterprise_customer')
+    @mock.patch('enterprise.tasks.LOGGER')
+    def test_send_enterprise_admin_invite_email_uses_learner_campaign(
+        self, mock_logger, mock_get_customer, mock_braze_client, mock_settings
+    ):
+        """
+        Test send_enterprise_admin_invite_email uses learner campaign when specified.
+        """
+        mock_customer = mock.Mock()
+        mock_customer.slug = 'slug'
+        mock_customer.name = 'name'
+        mock_customer.sender_alias = 'alias'
+        mock_customer.contact_email = 'contact@example.com'
+        mock_get_customer.return_value = mock_customer
+        mock_braze_instance = mock.Mock()
+        mock_braze_client.return_value = mock_braze_instance
+
+        mock_settings.ENTERPRISE_BRAZE_API_KEY = 'test-api-key'
+        mock_settings.EDX_BRAZE_API_SERVER = 'https://rest.iad-01.braze.com'
+        mock_settings.BRAZE_LEARNER_INVITE_CAMPAIGN_ID = 'learner-campaign-id'
+
+        send_enterprise_admin_invite_email(  # pylint: disable=no-value-for-parameter
+            str(self.enterprise_customer.uuid),
+            'learner@example.com',
+            BRAZE_LEARNER_INVITE_CAMPAIGN_SETTING
+        )
+
+        mock_braze_instance.send_campaign_message.assert_called_once_with(
+            'learner-campaign-id',
+            recipients=['learner@example.com'],
+            trigger_properties={
+                'customer-slug': 'slug',
+                'enterprise_customer_name': 'name',
+                'enterprise_sender_alias': 'alias',
+                'enterprise_contact_email': 'contact@example.com',
+            },
+        )
+
+    @mock.patch('enterprise.tasks.settings')
+    @mock.patch('enterprise.tasks.braze_client_module')
+    @mock.patch('enterprise.tasks.get_enterprise_customer')
+    @mock.patch('enterprise.tasks.LOGGER')
+    def test_send_enterprise_admin_invite_email_raises_error_when_learner_campaign_missing(
+        self, mock_logger, mock_get_customer, mock_braze_client, mock_settings
+    ):
+        """
+        Test send_enterprise_admin_invite_email raises ValueError when learner campaign is not configured.
+        """
+        mock_customer = mock.Mock()
+        mock_customer.slug = 'slug'
+        mock_customer.name = 'name'
+        mock_customer.sender_alias = 'alias'
+        mock_customer.contact_email = 'contact@example.com'
+        mock_get_customer.return_value = mock_customer
+
+        mock_settings.ENTERPRISE_BRAZE_API_KEY = 'test-api-key'
+        mock_settings.EDX_BRAZE_API_SERVER = 'https://rest.iad-01.braze.com'
+        mock_settings.BRAZE_LEARNER_INVITE_CAMPAIGN_ID = None
+
+        with self.assertRaises(ValueError) as context:
+            send_enterprise_admin_invite_email(  # pylint: disable=no-value-for-parameter
+                str(self.enterprise_customer.uuid),
+                'learner@example.com',
+                BRAZE_LEARNER_INVITE_CAMPAIGN_SETTING
+            )
+
+        self.assertIn('Missing BRAZE_LEARNER_INVITE_CAMPAIGN_ID', str(context.exception))
+        mock_logger.error.assert_called()
 
     @mock.patch('enterprise.models.EnterpriseCustomer.catalog_contains_course')
     def test_create_enrollment_task_course_in_catalog(self, mock_contains_course):

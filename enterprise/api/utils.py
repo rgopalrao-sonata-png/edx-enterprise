@@ -12,6 +12,8 @@ from django.db.models.functions import Lower
 from django.utils.translation import gettext as _
 
 from enterprise.constants import (
+    BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING,
+    BRAZE_LEARNER_INVITE_CAMPAIGN_SETTING,
     ENTERPRISE_CATALOG_ADMIN_ROLE,
     ENTERPRISE_DASHBOARD_ADMIN_ROLE,
     ENTERPRISE_REPORTING_CONFIG_ADMIN_ROLE,
@@ -133,6 +135,7 @@ def create_pending_invites(
         - Caller must wrap in transaction.atomic() to ensure atomicity
         - Uses get_or_create per email to avoid duplicate invite emails in race conditions
         - Emails are queued via transaction.on_commit() to send after transaction commits
+        - Emails are routed to different Braze campaigns based on EnterpriseCustomerUser existence
         - This ensures emails only send if database changes succeed
 
     Example:
@@ -158,15 +161,52 @@ def create_pending_invites(
                 created_invites.append(pending_invite)
 
         def _enqueue_email_jobs():
-            # Send invite email only for newly created pending invites.
-            if created_invites:
+            """Enqueue invite emails, routing to appropriate Braze campaigns."""
+            if not created_invites:
+                return
+
+            created_invite_emails = [invite.user_email for invite in created_invites]
+            
+            # Query existing ACTIVE EnterpriseCustomerUsers (with active auth_user accounts)
+            # Only send learner campaign to users with active accounts
+            existing_ecu_emails = set(
+                EnterpriseCustomerUser.objects.filter(
+                    enterprise_customer=enterprise_customer,
+                    user_fk__email__in=created_invite_emails,
+                    user_id__isnull=False  # Ensure user exists
+                ).select_related('user_fk').filter(
+                    user_fk__is_active=True  # Only include active users
+                ).values_list('user_fk__email', flat=True)
+            )
+            
+            # Split emails in a single pass for efficiency
+            learner_emails = []
+            new_admin_emails = []
+            for email in created_invite_emails:
+                if email in existing_ecu_emails:
+                    learner_emails.append(email)
+                else:
+                    new_admin_emails.append(email)
+            
+            # Send to existing learners with learner campaign
+            if learner_emails:
                 send_enterprise_admin_invite_email.delay(
                     str(enterprise_customer.uuid),
-                    [invite.user_email for invite in created_invites]
+                    learner_emails,
+                    campaign_setting_name=BRAZE_LEARNER_INVITE_CAMPAIGN_SETTING
+                )
+            
+            # Send to new admins with admin campaign
+            if new_admin_emails:
+                send_enterprise_admin_invite_email.delay(
+                    str(enterprise_customer.uuid),
+                    new_admin_emails,
+                    campaign_setting_name=BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING
                 )
 
         transaction.on_commit(_enqueue_email_jobs)
         return created_invites
+        
     except DatabaseError:
         logger.exception(
             "Database error creating pending invites for enterprise customer: %s",

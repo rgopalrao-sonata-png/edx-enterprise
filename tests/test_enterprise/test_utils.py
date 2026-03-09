@@ -23,7 +23,12 @@ from django.test import TestCase
 
 # First-party imports
 from enterprise.api import utils
-from enterprise.constants import DEFAULT_USERNAME_ATTR, MAX_ALLOWED_TEXT_LENGTH
+from enterprise.constants import (
+    BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING,
+    BRAZE_LEARNER_INVITE_CAMPAIGN_SETTING,
+    DEFAULT_USERNAME_ATTR,
+    MAX_ALLOWED_TEXT_LENGTH,
+)
 from enterprise.models import (
     EnterpriseCourseEnrollment,
     EnterpriseCustomerAdmin,
@@ -947,8 +952,10 @@ class TestAdminInviteUtils(TestCase):
             )
         mock_delay.assert_called_once()
         args = mock_delay.call_args[0]
+        kwargs = mock_delay.call_args[1]
         assert args[0] == str(self.enterprise_customer.uuid)
         assert set(args[1]) == set(emails)
+        assert kwargs.get('campaign_setting_name') == BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING
 
     @patch("enterprise.api.utils.send_enterprise_admin_invite_email.delay")
     @patch("enterprise.api.utils.transaction.on_commit")
@@ -968,6 +975,7 @@ class TestAdminInviteUtils(TestCase):
         mock_delay.assert_called_once_with(
             str(self.enterprise_customer.uuid),
             ["invite3@example.com"],
+            campaign_setting_name=BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING
         )
 
     def test_create_pending_invites_requires_atomic(self):
@@ -979,6 +987,82 @@ class TestAdminInviteUtils(TestCase):
                     self.enterprise_customer,
                     ["invite1@example.com"]
                 )
+
+    @patch("enterprise.api.utils.send_enterprise_admin_invite_email.delay")
+    @patch("enterprise.api.utils.transaction.on_commit")
+    def test_create_pending_invites_splits_by_ecu_existence(self, mock_on_commit, mock_delay):
+        """Test create_pending_invites sends separate campaigns for existing learners vs new admins."""
+        mock_on_commit.side_effect = lambda func: func()
+
+        # Create an existing ECU (not admin) for one email
+        learner_email = "learner@example.com"
+        learner_user = factories.UserFactory(email=learner_email, is_active=True)
+        factories.EnterpriseCustomerUserFactory(
+            enterprise_customer=self.enterprise_customer,
+            user_id=learner_user.id,
+        )
+
+        # Invite both an existing learner and a completely new email
+        new_admin_email = "newadmin@example.com"
+        emails = [learner_email, new_admin_email]
+        
+        with transaction.atomic():
+            created_invites = utils.create_pending_invites(
+                self.enterprise_customer,
+                emails
+            )
+
+        # Should have created 2 pending invites
+        assert len(created_invites) == 2
+        
+        # Should have made 2 separate calls: one for learner campaign, one for admin campaign
+        assert mock_delay.call_count == 2
+        
+        # Verify the learner campaign call
+        learner_call = [call for call in mock_delay.call_args_list 
+                       if call[1].get('campaign_setting_name') == BRAZE_LEARNER_INVITE_CAMPAIGN_SETTING]
+        assert len(learner_call) == 1
+        assert learner_call[0][0][0] == str(self.enterprise_customer.uuid)
+        assert learner_call[0][0][1] == [learner_email]
+        
+        # Verify the admin campaign call (explicit campaign_setting_name)
+        admin_call = [call for call in mock_delay.call_args_list 
+                     if call[1].get('campaign_setting_name') == BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING]
+        assert len(admin_call) == 1
+        assert admin_call[0][0][0] == str(self.enterprise_customer.uuid)
+        assert admin_call[0][0][1] == [new_admin_email]
+
+    @patch("enterprise.api.utils.send_enterprise_admin_invite_email.delay")
+    @patch("enterprise.api.utils.transaction.on_commit")
+    def test_create_pending_invites_inactive_learner_gets_admin_campaign(self, mock_on_commit, mock_delay):
+        """Test that inactive learners receive admin campaign (not learner campaign)."""
+        mock_on_commit.side_effect = lambda func: func()
+
+        # Create an existing ECU with INACTIVE user
+        inactive_learner_email = "inactive.learner@example.com"
+        inactive_user = factories.UserFactory(email=inactive_learner_email, is_active=False)
+        factories.EnterpriseCustomerUserFactory(
+            enterprise_customer=self.enterprise_customer,
+            user_id=inactive_user.id,
+        )
+
+        # Invite the inactive learner
+        with transaction.atomic():
+            created_invites = utils.create_pending_invites(
+                self.enterprise_customer,
+                [inactive_learner_email]
+            )
+
+        # Should have created 1 pending invite
+        assert len(created_invites) == 1
+        
+        # Should have made 1 call with ADMIN campaign (not learner)
+        # because user is inactive
+        assert mock_delay.call_count == 1
+        call_args = mock_delay.call_args
+        assert call_args[0][0] == str(self.enterprise_customer.uuid)
+        assert call_args[0][1] == [inactive_learner_email]
+        assert call_args[1].get('campaign_setting_name') == BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING
 
     def test_get_invite_status(self):
         """Test retrieval of invite status for emails."""
