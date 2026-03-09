@@ -272,7 +272,6 @@ def send_enterprise_admin_invite_email(
         'customer-slug': enterprise_slug,
         'enterprise_customer_name': enterprise_name,
         'enterprise_sender_alias': sender_alias,
-        'enterprise_contact_email': getattr(enterprise_customer, 'contact_email', None),
     }
 
     api_key = getattr(settings, 'ENTERPRISE_BRAZE_API_KEY', None)
