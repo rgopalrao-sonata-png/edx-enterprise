@@ -103,7 +103,6 @@ class TestEnterpriseTasks(unittest.TestCase):
                 'customer-slug': 'slug',
                 'enterprise_customer_name': 'name',
                 'enterprise_sender_alias': 'alias',
-                'enterprise_contact_email': 'contact@example.com',
             },
         )
 
@@ -257,7 +256,6 @@ class TestEnterpriseTasks(unittest.TestCase):
                 'customer-slug': 'slug',
                 'enterprise_customer_name': 'name',
                 'enterprise_sender_alias': 'alias',
-                'enterprise_contact_email': 'contact@example.com',
             },
         )
 
