@@ -369,6 +369,18 @@ class TestDeleteAdminEndpoint(APITest):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('role parameter is required', response.data['error'])
 
+    def test_delete_admin_missing_role_parameter_scoped_context(self):
+        """
+        Test missing role returns 400 (not 403) with enterprise-scoped provisioning context.
+        """
+        self.set_jwt_cookie(
+            SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE,
+            str(self.enterprise_customer.uuid),
+        )
+        response = self.client.delete(self.delete_url)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('role parameter is required', response.data['error'])
+
     def test_delete_admin_invalid_role_parameter(self):
         """
         Test that DELETE request fails when role parameter is invalid.
@@ -413,9 +425,10 @@ class TestDeleteAdminEndpoint(APITest):
         self.assertIn('user_deactivated', response.data)
         self.assertTrue(response.data['user_deactivated'])
 
-        # ECA record still exists in DB
-        admin = EnterpriseCustomerAdmin.objects.get(pk=self.admin.pk)
-        self.assertIsNotNone(admin)
+        # EnterpriseCustomerAdmin record is deleted.
+        self.assertFalse(
+            EnterpriseCustomerAdmin.objects.filter(pk=self.admin.pk).exists()
+        )
 
         # ECU is deactivated
         self.enterprise_customer_user.refresh_from_db()
@@ -507,6 +520,11 @@ class TestDeleteAdminEndpoint(APITest):
         self.enterprise_customer_user.refresh_from_db()
         self.assertTrue(self.enterprise_customer_user.active)
 
+        # Admin model record is removed even if ECU remains active.
+        self.assertFalse(
+            EnterpriseCustomerAdmin.objects.filter(pk=self.admin.pk).exists()
+        )
+
     def test_user_with_no_other_roles_ecu_deactivated(self):
         """
         Test that when a user has no other roles, the EnterpriseCustomerUser
@@ -582,6 +600,20 @@ class TestDeleteAdminEndpoint(APITest):
         response = self.client.delete(f'{url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_delete_admin_record_missing(self):
+        """
+        Test 404 when EnterpriseCustomerUser exists but admin record does not.
+        """
+        self.set_jwt_cookie(SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, ALL_ACCESS_CONTEXT)
+
+        # Remove admin record but keep EnterpriseCustomerUser.
+        self.admin.delete()
+
+        response = self.client.delete(f'{self.delete_url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn('Admin record not found', response.data['error'])
 
     def test_delete_admin_enterprise_customer_not_found(self):
         """
@@ -736,6 +768,51 @@ class TestDeleteAdminEndpoint(APITest):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertIn('Pending admin invitation not found', response.data['error'])
 
+    @mock.patch(
+        'enterprise.api.v1.views.enterprise_customer_admin.'
+        'models.PendingEnterpriseCustomerAdminUser.objects.select_for_update'
+    )
+    def test_delete_pending_admin_database_error(self, mock_select_for_update):
+        """
+        Test 500 when pending admin delete path raises DatabaseError.
+        """
+        self.set_jwt_cookie(SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, ALL_ACCESS_CONTEXT)
+
+        pending_admin = PendingEnterpriseCustomerAdminUserFactory(
+            enterprise_customer=self.enterprise_customer,
+            user_email='pending@example.com'
+        )
+        url = reverse(
+            'enterprise-customer-admin-delete-admin',
+            kwargs={'customer_id': str(pending_admin.id)},
+        )
+
+        mock_select_for_update.return_value.select_related.return_value.get.side_effect = DatabaseError('db error')
+
+        response = self.client.delete(f'{url}?role={PENDING_ADMIN_ROLE_TYPE}')
+
+        self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        self.assertIn('Failed to delete pending admin invitation due to a database error', response.data['error'])
+
+    @mock.patch(
+        'enterprise.api.v1.views.enterprise_customer_admin.'
+        'models.SystemWideEnterpriseUserRoleAssignment.objects.select_for_update'
+    )
+    def test_delete_active_admin_database_error(self, mock_select_for_update):
+        """
+        Test 500 when active admin delete path raises DatabaseError.
+        """
+        self.set_jwt_cookie(SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, ALL_ACCESS_CONTEXT)
+
+        mock_role_assignment = mock.MagicMock()
+        mock_role_assignment.delete.side_effect = DatabaseError('db error')
+        mock_select_for_update.return_value.filter.return_value = mock_role_assignment
+
+        response = self.client.delete(f'{self.delete_url}?role={ACTIVE_ADMIN_ROLE_TYPE}')
+
+        self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        self.assertIn('Failed to delete admin due to a database error', response.data['error'])
+
     def test_delete_pending_admin_wrong_enterprise(self):
         """
         Test deleting pending admin from one enterprise doesn't affect another.
@@ -868,7 +945,7 @@ class TestInviteAdminsEndpoint(APITest):
     def setUp(self):
         super().setUp()
         self.enterprise_customer = EnterpriseCustomerFactory()
-        self.admin_user = UserFactory(email='admin@example.com')
+        self.admin_user = UserFactory(email='admin@example.com', is_active=True)
         self.enterprise_customer_user = EnterpriseCustomerUserFactory(
             user_id=self.admin_user.id,
             enterprise_customer=self.enterprise_customer
