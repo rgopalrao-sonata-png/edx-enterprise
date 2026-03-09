@@ -414,13 +414,6 @@ class EnterpriseCustomerAdminViewSet(
             enterprise_customer.uuid
         )
 
-        admin_record.delete()
-        logger.info(
-            "Deleted EnterpriseCustomerAdmin record id=%s for EnterpriseCustomerUser id=%s",
-            admin_record.pk,
-            enterprise_customer_user.id,
-        )
-
         # Check if user has other roles for this enterprise with row-level locking to prevent race conditions
         has_other_roles = models.SystemWideEnterpriseUserRoleAssignment.objects.select_for_update().filter(
             user=user,

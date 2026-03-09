@@ -425,8 +425,8 @@ class TestDeleteAdminEndpoint(APITest):
         self.assertIn('user_deactivated', response.data)
         self.assertTrue(response.data['user_deactivated'])
 
-        # EnterpriseCustomerAdmin record is deleted.
-        self.assertFalse(
+        # EnterpriseCustomerAdmin record still exists (soft delete via ECU deactivation).
+        self.assertTrue(
             EnterpriseCustomerAdmin.objects.filter(pk=self.admin.pk).exists()
         )
 
@@ -520,8 +520,8 @@ class TestDeleteAdminEndpoint(APITest):
         self.enterprise_customer_user.refresh_from_db()
         self.assertTrue(self.enterprise_customer_user.active)
 
-        # Admin model record is removed even if ECU remains active.
-        self.assertFalse(
+        # Admin model record still exists (not hard deleted).
+        self.assertTrue(
             EnterpriseCustomerAdmin.objects.filter(pk=self.admin.pk).exists()
         )
 
