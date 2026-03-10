@@ -1,21 +1,43 @@
 """
 Tests for the `edx-enterprise` utils module.
 """
+
+# Standard library imports
 import math
 import unittest
 from datetime import timedelta
 from unittest import mock
-from unittest.mock import call
+from unittest.mock import call, patch
 from urllib.parse import quote, urlencode
 
+# Third-party imports
 import ddt
+import pytest
 from pytest import mark
 
+# Django imports
 from django.conf import settings
+from django.db import DatabaseError, transaction
 from django.forms.models import model_to_dict
+from django.test import TestCase
 
-from enterprise.constants import DEFAULT_USERNAME_ATTR, MAX_ALLOWED_TEXT_LENGTH
-from enterprise.models import EnterpriseCourseEnrollment, LicensedEnterpriseCourseEnrollment
+# First-party imports
+from enterprise.api import utils
+from enterprise.constants import (
+    BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING,
+    BRAZE_LEARNER_INVITE_CAMPAIGN_SETTING,
+    DEFAULT_USERNAME_ATTR,
+    ENTERPRISE_ADMIN_ROLE,
+    MAX_ALLOWED_TEXT_LENGTH,
+)
+from enterprise.models import (
+    EnterpriseCourseEnrollment,
+    EnterpriseCustomerAdmin,
+    LicensedEnterpriseCourseEnrollment,
+    PendingEnterpriseCustomerAdminUser,
+    SystemWideEnterpriseRole,
+    SystemWideEnterpriseUserRoleAssignment,
+)
 from enterprise.utils import (
     batch_dict,
     enroll_subsidy_users_in_courses,
@@ -862,3 +884,388 @@ class TestUtils(unittest.TestCase):
 
         assert result is None
         mock_idp_config.get_user_details.assert_called_once()
+
+
+class TestAdminInviteUtils(TestCase):
+    """Tests for admin invite utility functions."""
+    def setUp(self):
+        """Set up test data for admin invite utils tests."""
+        self.enterprise_customer = factories.EnterpriseCustomerFactory(name="Test EC")
+        self.active_admin_user = factories.UserFactory(is_active=True)
+        # Create an admin user properly linked
+        self.enterprise_customer_user = factories.EnterpriseCustomerUserFactory(
+            enterprise_customer=self.enterprise_customer,
+            user_id=self.active_admin_user.id,
+        )
+        self.admin_user = EnterpriseCustomerAdmin.objects.create(
+            enterprise_customer_user=self.enterprise_customer_user
+        )
+        # Create admin role assignment for the active admin
+        admin_role, _ = SystemWideEnterpriseRole.objects.get_or_create(
+            name=ENTERPRISE_ADMIN_ROLE
+        )
+        SystemWideEnterpriseUserRoleAssignment.objects.create(
+            user=self.active_admin_user,
+            role=admin_role,
+            enterprise_customer=self.enterprise_customer,
+        )
+        PendingEnterpriseCustomerAdminUser.objects.create(
+            enterprise_customer=self.enterprise_customer,
+            user_email="pending@example.com"
+        )
+
+    def test_get_existing_admin_emails(self):
+        """Test retrieval of existing admin emails with active role assignments."""
+        emails = utils.get_existing_admin_emails(self.enterprise_customer)
+        assert isinstance(emails, set)
+        assert self.active_admin_user.email.lower() in emails
+
+    def test_get_existing_admin_emails_excludes_inactive_users(self):
+        """Test that inactive enterprise users and users without role assignments are excluded."""
+        admin_role, _ = SystemWideEnterpriseRole.objects.get_or_create(
+            name=ENTERPRISE_ADMIN_ROLE
+        )
+
+        # Create inactive ECU (soft-deleted)
+        inactive_ecu_user = factories.UserFactory(is_active=True)
+        inactive_ecu = factories.EnterpriseCustomerUserFactory(
+            enterprise_customer=self.enterprise_customer,
+            user_id=inactive_ecu_user.id,
+            active=False,
+        )
+        EnterpriseCustomerAdmin.objects.create(enterprise_customer_user=inactive_ecu)
+        SystemWideEnterpriseUserRoleAssignment.objects.create(
+            user=inactive_ecu_user,
+            role=admin_role,
+            enterprise_customer=self.enterprise_customer,
+        )
+
+        # Create active ECU but no role assignment (role removed)
+        no_role_user = factories.UserFactory(is_active=True)
+        no_role_ecu = factories.EnterpriseCustomerUserFactory(
+            enterprise_customer=self.enterprise_customer,
+            user_id=no_role_user.id,
+            active=True,
+        )
+        EnterpriseCustomerAdmin.objects.create(enterprise_customer_user=no_role_ecu)
+        # Note: No role assignment created for this user
+
+        emails = utils.get_existing_admin_emails(self.enterprise_customer)
+
+        # Should only include the active admin with role
+        assert self.active_admin_user.email.lower() in emails
+        # Should exclude inactive ECU
+        assert inactive_ecu_user.email.lower() not in emails
+        # Should exclude user without role
+        assert no_role_user.email.lower() not in emails
+
+    def test_get_inactive_admin_emails(self):
+        """Test retrieval of inactive admin emails (soft-deleted and role-removed)."""
+        SystemWideEnterpriseRole.objects.get_or_create(
+            name=ENTERPRISE_ADMIN_ROLE
+        )
+
+        # Create soft-deleted admin (inactive ECU)
+        soft_deleted_user = factories.UserFactory(is_active=True)
+        soft_deleted_ecu = factories.EnterpriseCustomerUserFactory(
+            enterprise_customer=self.enterprise_customer,
+            user_id=soft_deleted_user.id,
+            active=False,
+        )
+        EnterpriseCustomerAdmin.objects.create(enterprise_customer_user=soft_deleted_ecu)
+
+        # Create role-removed admin (active ECU, no role assignment)
+        role_removed_user = factories.UserFactory(is_active=True)
+        role_removed_ecu = factories.EnterpriseCustomerUserFactory(
+            enterprise_customer=self.enterprise_customer,
+            user_id=role_removed_user.id,
+            active=True,
+        )
+        EnterpriseCustomerAdmin.objects.create(enterprise_customer_user=role_removed_ecu)
+
+        soft_deleted_emails, role_removed_emails = utils.get_inactive_admin_emails(self.enterprise_customer)
+
+        assert isinstance(soft_deleted_emails, set)
+        assert isinstance(role_removed_emails, set)
+        assert soft_deleted_user.email.lower() in soft_deleted_emails
+        assert role_removed_user.email.lower() in role_removed_emails
+        # Active admin should not be in either set
+        assert self.active_admin_user.email.lower() not in soft_deleted_emails
+        assert self.active_admin_user.email.lower() not in role_removed_emails
+
+    def test_get_existing_pending_emails(self):
+        """Test retrieval of existing pending admin emails."""
+        emails = utils.get_existing_pending_emails(self.enterprise_customer, ["pending@example.com"])
+        assert "pending@example.com" in emails
+
+    @patch("enterprise.api.utils.send_enterprise_admin_invite_email.delay")
+    @patch("enterprise.api.utils.transaction.on_commit")
+    def test_create_pending_invites(self, mock_on_commit, mock_delay):
+        """Test creation of pending admin invites."""
+        # Make on_commit execute the callback immediately
+        mock_on_commit.side_effect = lambda func: func()
+
+        emails = ["invite1@example.com", "invite2@example.com"]
+        with transaction.atomic():
+            utils.create_pending_invites(
+                self.enterprise_customer,
+                emails
+            )
+        mock_delay.assert_called_once()
+        args = mock_delay.call_args[0]
+        kwargs = mock_delay.call_args[1]
+        assert args[0] == str(self.enterprise_customer.uuid)
+        assert set(args[1]) == set(emails)
+        assert kwargs.get('campaign_setting_name') == BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING
+
+    @patch("enterprise.api.utils.send_enterprise_admin_invite_email.delay")
+    @patch("enterprise.api.utils.transaction.on_commit")
+    def test_create_pending_invites_only_emails_new_invites(self, mock_on_commit, mock_delay):
+        """Test create_pending_invites only queues email for newly-created pending admins."""
+        mock_on_commit.side_effect = lambda func: func()
+
+        emails = ["pending@example.com", "invite3@example.com"]
+        with transaction.atomic():
+            created_invites = utils.create_pending_invites(
+                self.enterprise_customer,
+                emails,
+            )
+
+        assert len(created_invites) == 1
+        assert created_invites[0].user_email == "invite3@example.com"
+        mock_delay.assert_called_once_with(
+            str(self.enterprise_customer.uuid),
+            ["invite3@example.com"],
+            campaign_setting_name=BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING
+        )
+
+    def test_create_pending_invites_requires_atomic(self):
+        """Test create_pending_invites raises when no active transaction exists."""
+        with patch("enterprise.api.utils.transaction.get_connection") as mock_get_connection:
+            mock_get_connection.return_value.in_atomic_block = False
+            with pytest.raises(RuntimeError):
+                utils.create_pending_invites(
+                    self.enterprise_customer,
+                    ["invite1@example.com"]
+                )
+
+    @patch("enterprise.api.utils.send_enterprise_admin_invite_email.delay")
+    @patch("enterprise.api.utils.transaction.on_commit")
+    def test_create_pending_invites_splits_by_ecu_existence(self, mock_on_commit, mock_delay):
+        """Test create_pending_invites sends separate campaigns for existing learners vs new admins."""
+        mock_on_commit.side_effect = lambda func: func()
+
+        # Create an existing ECU (not admin) for one email
+        learner_email = "learner@example.com"
+        learner_user = factories.UserFactory(email=learner_email, is_active=True)
+        factories.EnterpriseCustomerUserFactory(
+            enterprise_customer=self.enterprise_customer,
+            user_id=learner_user.id,
+        )
+
+        # Invite both an existing learner and a completely new email
+        new_admin_email = "newadmin@example.com"
+        emails = [learner_email, new_admin_email]
+
+        with transaction.atomic():
+            created_invites = utils.create_pending_invites(
+                self.enterprise_customer,
+                emails
+            )
+
+        # Should have created 2 pending invites
+        assert len(created_invites) == 2
+
+        # Should have made 2 separate calls: one for learner campaign, one for admin campaign
+        assert mock_delay.call_count == 2
+
+        # Verify the learner campaign call
+        learner_call = [call for call in mock_delay.call_args_list
+                        if call[1].get('campaign_setting_name') == BRAZE_LEARNER_INVITE_CAMPAIGN_SETTING]
+        assert len(learner_call) == 1
+        assert learner_call[0][0][0] == str(self.enterprise_customer.uuid)
+        assert learner_call[0][0][1] == [learner_email]
+
+        # Verify the admin campaign call (explicit campaign_setting_name)
+        admin_call = [call for call in mock_delay.call_args_list
+                      if call[1].get('campaign_setting_name') == BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING]
+        assert len(admin_call) == 1
+        assert admin_call[0][0][0] == str(self.enterprise_customer.uuid)
+        assert admin_call[0][0][1] == [new_admin_email]
+
+    @patch("enterprise.api.utils.send_enterprise_admin_invite_email.delay")
+    @patch("enterprise.api.utils.transaction.on_commit")
+    def test_create_pending_invites_inactive_learner_gets_admin_campaign(self, mock_on_commit, mock_delay):
+        """Test that inactive learners receive admin campaign (not learner campaign)."""
+        mock_on_commit.side_effect = lambda func: func()
+
+        # Create an existing ECU with INACTIVE user
+        inactive_learner_email = "inactive.learner@example.com"
+        inactive_user = factories.UserFactory(email=inactive_learner_email, is_active=False)
+        factories.EnterpriseCustomerUserFactory(
+            enterprise_customer=self.enterprise_customer,
+            user_id=inactive_user.id,
+        )
+
+        # Invite the inactive learner
+        with transaction.atomic():
+            created_invites = utils.create_pending_invites(
+                self.enterprise_customer,
+                [inactive_learner_email]
+            )
+
+        # Should have created 1 pending invite
+        assert len(created_invites) == 1
+
+        # Should have made 1 call with ADMIN campaign (not learner)
+        # because user is inactive
+        assert mock_delay.call_count == 1
+        call_args = mock_delay.call_args
+        assert call_args[0][0] == str(self.enterprise_customer.uuid)
+        assert call_args[0][1] == [inactive_learner_email]
+        assert call_args[1].get('campaign_setting_name') == BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING
+
+    @patch("enterprise.api.utils.send_enterprise_admin_invite_email.delay")
+    @patch("enterprise.api.utils.transaction.on_commit")
+    def test_create_pending_invites_case_insensitive_email_matching(self, mock_on_commit, mock_delay):
+        """Test that email matching is case-insensitive for campaign routing."""
+        mock_on_commit.side_effect = lambda func: func()
+
+        # Create an existing ECU with mixed-case email in database
+        mixed_case_email = "Learner@Example.COM"
+        learner_user = factories.UserFactory(email=mixed_case_email, is_active=True)
+        factories.EnterpriseCustomerUserFactory(
+            enterprise_customer=self.enterprise_customer,
+            user_id=learner_user.id,
+        )
+
+        # Invite with lowercase normalized email (as serializer does)
+        normalized_email = "learner@example.com"
+
+        with transaction.atomic():
+            created_invites = utils.create_pending_invites(
+                self.enterprise_customer,
+                [normalized_email]
+            )
+
+        # Should have created 1 pending invite
+        assert len(created_invites) == 1
+
+        # Should send to LEARNER campaign (not admin) despite case mismatch
+        assert mock_delay.call_count == 1
+        call_args = mock_delay.call_args
+        assert call_args[0][0] == str(self.enterprise_customer.uuid)
+        assert call_args[0][1] == [normalized_email]
+        assert call_args[1].get('campaign_setting_name') == BRAZE_LEARNER_INVITE_CAMPAIGN_SETTING
+
+    def test_get_invite_status(self):
+        """Test retrieval of invite status for emails."""
+        admin_emails = utils.get_existing_admin_emails(self.enterprise_customer)
+        pending_emails = utils.get_existing_pending_emails(self.enterprise_customer, ["pending@example.com"])
+        soft_deleted_emails = set()
+        role_removed_emails = set()
+
+        assert utils.get_invite_status(
+            "pending@example.com", admin_emails, pending_emails, soft_deleted_emails, role_removed_emails
+        ) == "already sent"
+        assert utils.get_invite_status(
+            "notfound@example.com", admin_emails, pending_emails, soft_deleted_emails, role_removed_emails
+        ) == "invite sent"
+
+    def test_get_invite_status_with_inactive_admins(self):
+        """Test invite status for soft-deleted and role-removed admins."""
+        admin_emails = set(["active@example.com"])
+        pending_emails = set()
+        soft_deleted_emails = set(["softdeleted@example.com"])
+        role_removed_emails = set(["roleremoved@example.com"])
+
+        # Soft-deleted admin should return INACTIVE_ADMIN
+        assert utils.get_invite_status(
+            "softdeleted@example.com", admin_emails, pending_emails, soft_deleted_emails, role_removed_emails
+        ) == "inactive admin"
+
+        # Role-removed admin should return ADMIN_ROLE_REMOVED
+        assert utils.get_invite_status(
+            "roleremoved@example.com", admin_emails, pending_emails, soft_deleted_emails, role_removed_emails
+        ) == "admin role removed"
+
+        # Active admin should return EXISTING_ADMIN
+        assert utils.get_invite_status(
+            "active@example.com", admin_emails, pending_emails, soft_deleted_emails, role_removed_emails
+        ) == "already admin"
+
+    def test_get_existing_admin_emails_handles_exception(self):
+        """Test exception handling in get_existing_admin_emails."""
+        # Simulate exception in queryset
+        with patch("enterprise.api.utils.EnterpriseCustomerAdmin.objects.filter") as mock_filter:
+            mock_filter.side_effect = Exception("DB error")
+            with pytest.raises(Exception):
+                utils.get_existing_admin_emails(self.enterprise_customer)
+
+    def test_get_inactive_admin_emails_handles_exception(self):
+        """Test exception handling in get_inactive_admin_emails."""
+        # Simulate exception in queryset
+        with patch("enterprise.api.utils.EnterpriseCustomerAdmin.objects.filter") as mock_filter:
+            mock_filter.side_effect = DatabaseError("DB error")
+            with pytest.raises(DatabaseError):
+                utils.get_inactive_admin_emails(self.enterprise_customer)
+
+    def test_get_existing_pending_emails_handles_exception(self):
+        """Test exception handling in get_existing_pending_emails."""
+        # Simulate exception in queryset
+        with patch("enterprise.api.utils.PendingEnterpriseCustomerAdminUser.objects.filter") as mock_filter:
+            mock_filter.side_effect = Exception("DB error")
+            with pytest.raises(Exception):
+                utils.get_existing_pending_emails(self.enterprise_customer, ["pending@example.com"])
+
+    @patch("enterprise.api.utils.send_enterprise_admin_invite_email.delay")
+    @patch("enterprise.api.utils.transaction.on_commit")
+    def test_create_pending_invites_soft_deleted_ecu_gets_admin_campaign(self, mock_on_commit, mock_delay):
+        """Test that soft-deleted ECU learners receive admin campaign (not learner campaign)."""
+        mock_on_commit.side_effect = lambda func: func()
+
+        # Create an existing ECU with ACTIVE user but SOFT-DELETED ECU (active=False)
+        soft_deleted_learner_email = "softdeleted.learner@example.com"
+        active_user = factories.UserFactory(email=soft_deleted_learner_email, is_active=True)
+        factories.EnterpriseCustomerUserFactory(
+            enterprise_customer=self.enterprise_customer,
+            user_id=active_user.id,
+            active=False,  # Soft-deleted ECU
+        )
+
+        # Invite the soft-deleted learner
+        with transaction.atomic():
+            created_invites = utils.create_pending_invites(
+                self.enterprise_customer,
+                [soft_deleted_learner_email]
+            )
+
+        # Should have created 1 pending invite
+        assert len(created_invites) == 1
+
+        # Should have made 1 call with ADMIN campaign (not learner)
+        # because ECU is soft-deleted (active=False)
+        assert mock_delay.call_count == 1
+        call_args = mock_delay.call_args
+        assert call_args[0][0] == str(self.enterprise_customer.uuid)
+        assert call_args[0][1] == [soft_deleted_learner_email]
+        assert call_args[1].get('campaign_setting_name') == BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING
+
+    @patch("enterprise.api.utils.send_enterprise_admin_invite_email.delay")
+    def test_create_pending_invites_handles_exception(self, _mock_delay):
+        """Test exception handling in create_pending_invites."""
+        # Simulate database exception while creating pending invite
+        with patch(
+            "enterprise.api.utils.PendingEnterpriseCustomerAdminUser.objects.get_or_create"
+        ) as mock_get_or_create:
+            with patch("enterprise.api.utils.logger.exception") as mock_logger_exception:
+                mock_get_or_create.side_effect = DatabaseError("DB error")
+                with transaction.atomic():
+                    with pytest.raises(DatabaseError):
+                        utils.create_pending_invites(
+                            self.enterprise_customer,
+                            [
+                                "invite1@example.com"
+                            ]
+                        )
+                assert mock_logger_exception.called

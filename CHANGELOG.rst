@@ -19,6 +19,7 @@ Unreleased
 
 [6.6.9] - 2026-03-10
 ---------------------
+* feat: Add enterprise admin invite via Braze email campaign with routing logic
 * fix: handle duplicate enterprise group name validation error (ENT-11506)
 
 [6.6.8] - 2026-03-05
