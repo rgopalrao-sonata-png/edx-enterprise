@@ -17,6 +17,10 @@ Unreleased
 ----------
 * nothing unreleased
 
+[6.6.9] - 2026-03-10
+---------------------
+* feat: Add enterprise admin invite via Braze email campaign with routing logic
+
 [6.6.8] - 2026-03-05
 ---------------------
 * feat: moving retirement code to edx-enterprise

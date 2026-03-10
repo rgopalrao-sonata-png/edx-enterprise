@@ -1,17 +1,28 @@
 """
 Utility functions for the Enterprise API.
 """
+import logging
+from typing import List, Optional, Set, Tuple
+
 from django.conf import settings
 from django.contrib import auth
+from django.db import DatabaseError, transaction
+from django.db.models import F
+from django.db.models.functions import Lower
 from django.utils.translation import gettext as _
 
 from enterprise.constants import (
+    BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING,
+    BRAZE_LEARNER_INVITE_CAMPAIGN_SETTING,
+    ENTERPRISE_ADMIN_ROLE,
     ENTERPRISE_CATALOG_ADMIN_ROLE,
     ENTERPRISE_DASHBOARD_ADMIN_ROLE,
     ENTERPRISE_REPORTING_CONFIG_ADMIN_ROLE,
+    AdminInviteStatus,
 )
 from enterprise.models import (
     EnterpriseCustomer,
+    EnterpriseCustomerAdmin,
     EnterpriseCustomerCatalog,
     EnterpriseCustomerInviteKey,
     EnterpriseCustomerReportingConfiguration,
@@ -19,7 +30,354 @@ from enterprise.models import (
     EnterpriseFeatureRole,
     EnterpriseFeatureUserRoleAssignment,
     EnterpriseGroup,
+    PendingEnterpriseCustomerAdminUser,
+    SystemWideEnterpriseUserRoleAssignment,
 )
+from enterprise.tasks import send_enterprise_admin_invite_email
+
+logger = logging.getLogger(__name__)
+
+
+def get_existing_admin_emails(enterprise_customer: EnterpriseCustomer) -> Set[str]:
+    """
+    Retrieve normalized email addresses of existing ACTIVE enterprise admins.
+
+    Only includes admins who have:
+    1. An EnterpriseCustomerAdmin record
+    2. An active EnterpriseCustomerUser (active=True)
+    3. An active admin role assignment in SystemWideEnterpriseUserRoleAssignment
+
+    Args:
+        enterprise_customer: The enterprise customer instance.
+
+    Returns:
+        Set of lowercased email addresses of active admins with valid role assignments.
+
+    Raises:
+        DatabaseError: If database query fails.
+
+    Example:
+        >>> emails = get_existing_admin_emails(customer)
+        >>> 'admin@example.com' in emails
+        True
+    """
+    try:
+        # Get user IDs with active admin role assignments
+        users_with_admin_role = set(
+            SystemWideEnterpriseUserRoleAssignment.objects.filter(
+                enterprise_customer=enterprise_customer,
+                role__name=ENTERPRISE_ADMIN_ROLE,
+            ).values_list('user_id', flat=True)
+        )
+
+        # Return emails of admins who have active ECU AND active role assignment
+        return set(
+            EnterpriseCustomerAdmin.objects.filter(
+                enterprise_customer_user__enterprise_customer=enterprise_customer,
+                enterprise_customer_user__active=True,
+                enterprise_customer_user__user_id__in=users_with_admin_role,
+            )
+            .annotate(email_l=Lower(F("enterprise_customer_user__user_fk__email")))
+            .values_list("email_l", flat=True)
+        )
+    except DatabaseError:
+        logger.exception(
+            "Database error retrieving existing admin emails for enterprise customer: %s",
+            enterprise_customer.uuid,
+        )
+        raise
+
+
+def get_inactive_admin_emails(enterprise_customer: EnterpriseCustomer) -> Tuple[Set[str], Set[str]]:
+    """
+    Retrieve normalized email addresses of inactive enterprise admins.
+
+    This includes two categories:
+
+    1. Soft-deleted admins: EnterpriseCustomerUser has been deactivated (active=False)
+    2. Role-removed admins: EnterpriseCustomerUser is still active but admin role assignment
+       was removed from SystemWideEnterpriseUserRoleAssignment
+
+    Both cases occur when delete_admin endpoint is called with different outcomes
+    based on whether the user has other roles.
+
+    Args:
+        enterprise_customer: The enterprise customer instance.
+
+    Returns:
+        Tuple of (soft_deleted_emails, role_removed_emails):
+        - soft_deleted_emails: Set of lowercased emails for deactivated admins
+        - role_removed_emails: Set of lowercased emails for active users with removed admin role
+
+    Raises:
+        DatabaseError: If database query fails.
+
+    Example:
+        >>> soft_deleted, role_removed = get_inactive_admin_emails(customer)
+        >>> 'former_admin@example.com' in role_removed
+        True
+    """
+    try:
+        soft_deleted_emails: Set[str] = set()
+        role_removed_emails: Set[str] = set()
+
+        # Get all EnterpriseCustomerAdmin records for this customer
+        admin_records = EnterpriseCustomerAdmin.objects.filter(
+            enterprise_customer_user__enterprise_customer=enterprise_customer,
+        ).select_related('enterprise_customer_user__user_fk')
+
+        # Early return if no admin records exist
+        if not admin_records:
+            return soft_deleted_emails, role_removed_emails
+
+        # Batch fetch all user IDs with active admin role assignments to avoid N+1 queries
+        admin_user_ids: List[int] = [
+            admin.enterprise_customer_user.user_id
+            for admin in admin_records
+            if admin.enterprise_customer_user.user_id is not None
+        ]
+
+        users_with_admin_role: Set[int] = set()
+        if admin_user_ids:
+            users_with_admin_role = set(
+                SystemWideEnterpriseUserRoleAssignment.objects.filter(
+                    user_id__in=admin_user_ids,
+                    enterprise_customer=enterprise_customer,
+                    role__name=ENTERPRISE_ADMIN_ROLE,
+                ).values_list('user_id', flat=True)
+            )
+
+        # Check each admin record
+        for admin in admin_records:
+            ecu = admin.enterprise_customer_user
+
+            # Skip if user relationship is missing (data integrity issue)
+            if not ecu or not ecu.user_fk or not ecu.user_id:
+                logger.warning(
+                    "EnterpriseCustomerAdmin id=%s has missing user relationship for enterprise %s",
+                    admin.id,
+                    enterprise_customer.uuid
+                )
+                continue
+
+            user = ecu.user_fk
+
+            # Case 1: Soft-deleted (EnterpriseCustomerUser deactivated)
+            if not ecu.active:
+                soft_deleted_emails.add(user.email.lower())
+                continue
+
+            # Case 2: Active EnterpriseCustomerUser but no admin role assignment
+            if ecu.user_id not in users_with_admin_role:
+                role_removed_emails.add(user.email.lower())
+
+        return soft_deleted_emails, role_removed_emails
+
+    except DatabaseError:
+        logger.exception(
+            "Database error retrieving inactive admin emails for enterprise customer: %s",
+            enterprise_customer.uuid,
+        )
+        raise
+
+
+def get_existing_pending_emails(
+    enterprise_customer: EnterpriseCustomer,
+    normalized_emails: List[str]
+) -> Set[str]:
+    """
+    Retrieve normalized email addresses of pending admin invitations.
+
+    Args:
+        enterprise_customer: The enterprise customer instance.
+        normalized_emails: List of normalized email addresses to check.
+
+    Returns:
+        Set of lowercased email addresses that have pending invitations.
+
+    Raises:
+        DatabaseError: If database query fails.
+
+    Example:
+        >>> pending = get_existing_pending_emails(customer, ['user@example.com'])
+        >>> 'user@example.com' in pending
+        True
+    """
+    try:
+        return set(
+            PendingEnterpriseCustomerAdminUser.objects.filter(
+                enterprise_customer=enterprise_customer,
+            )
+            .annotate(email_l=Lower(F("user_email")))
+            .filter(email_l__in=normalized_emails)
+            .values_list("email_l", flat=True)
+        )
+    except DatabaseError:
+        logger.exception(
+            "Database error retrieving existing pending emails for enterprise customer: %s",
+            enterprise_customer.uuid,
+        )
+        raise
+
+
+def create_pending_invites(
+    enterprise_customer: EnterpriseCustomer,
+    emails_to_invite: List[str]
+) -> List[PendingEnterpriseCustomerAdminUser]:
+    """
+    Create pending admin invitations and trigger email notifications.
+
+    Creates PendingEnterpriseCustomerAdminUser records for new admin invites
+    and enqueues Braze email tasks to be sent after transaction commits.
+
+    Args:
+        enterprise_customer: The enterprise customer instance.
+        emails_to_invite: List of normalized email addresses to invite.
+
+    Returns:
+        List of created PendingEnterpriseCustomerAdminUser instances.
+
+    Raises:
+        DatabaseError: If database operation fails.
+        ValueError: If emails_to_invite is empty.
+        RuntimeError: If called outside a transaction.atomic block.
+
+    Note:
+        - Caller must wrap in transaction.atomic() to ensure atomicity
+        - Uses get_or_create per email to avoid duplicate invite emails in race conditions
+        - Emails are queued via transaction.on_commit() to send after transaction commits
+        - Emails are routed to different Braze campaigns based on EnterpriseCustomerUser existence
+        - This ensures emails only send if database changes succeed
+
+    Example:
+        >>> with transaction.atomic():
+        ...     invites = create_pending_invites(customer, ['new@example.com'])
+        >>> len(invites) > 0
+        True
+    """
+    if not emails_to_invite:
+        raise ValueError("emails_to_invite cannot be empty")
+
+    if not transaction.get_connection().in_atomic_block:
+        raise RuntimeError("create_pending_invites must be called inside transaction.atomic().")
+
+    try:
+        created_invites = []
+        for email in emails_to_invite:
+            pending_invite, created = PendingEnterpriseCustomerAdminUser.objects.get_or_create(
+                enterprise_customer=enterprise_customer,
+                user_email=email,
+            )
+            if created:
+                created_invites.append(pending_invite)
+
+        def _enqueue_email_jobs():
+            """Enqueue invite emails, routing to appropriate Braze campaigns."""
+            if not created_invites:
+                return
+
+            created_invite_emails = [invite.user_email for invite in created_invites]
+
+            # Query existing ACTIVE EnterpriseCustomerUsers (with active auth_user accounts)
+            # Only send learner campaign to users with active accounts
+            # Use case-insensitive email matching since invite emails are normalized (lowercased)
+            # but database emails may have mixed case
+            existing_ecu_emails = set(
+                EnterpriseCustomerUser.objects.filter(
+                    enterprise_customer=enterprise_customer,
+                    active=True,  # Only include active ECU records (exclude soft-deleted admins)
+                    user_id__isnull=False,  # Ensure user exists
+                    user_fk__is_active=True,  # Only include active users
+                ).select_related('user_fk').annotate(
+                    email_lower=Lower('user_fk__email')
+                ).filter(
+                    email_lower__in=created_invite_emails
+                ).values_list('email_lower', flat=True)
+            )
+
+            # Split emails in a single pass for efficiency
+            learner_emails = []
+            new_admin_emails = []
+            for email in created_invite_emails:
+                if email in existing_ecu_emails:
+                    learner_emails.append(email)
+                else:
+                    new_admin_emails.append(email)
+
+            # Send to existing learners with learner campaign
+            if learner_emails:
+                send_enterprise_admin_invite_email.delay(
+                    str(enterprise_customer.uuid),
+                    learner_emails,
+                    campaign_setting_name=BRAZE_LEARNER_INVITE_CAMPAIGN_SETTING
+                )
+
+            # Send to new admins with admin campaign
+            if new_admin_emails:
+                send_enterprise_admin_invite_email.delay(
+                    str(enterprise_customer.uuid),
+                    new_admin_emails,
+                    campaign_setting_name=BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING
+                )
+
+        transaction.on_commit(_enqueue_email_jobs)
+        return created_invites
+
+    except DatabaseError:
+        logger.exception(
+            "Database error creating pending invites for enterprise customer: %s",
+            enterprise_customer.uuid,
+        )
+        raise
+
+
+def get_invite_status(
+    email: str,
+    existing_admin_emails: Set[str],
+    existing_pending_emails: Set[str],
+    soft_deleted_admin_emails: Optional[Set[str]] = None,
+    role_removed_admin_emails: Optional[Set[str]] = None
+) -> str:
+    """
+    Determine the invitation status for a given email address.
+
+    Args:
+        email (str): The email address to check.
+        existing_admin_emails (Set[str]): Set of existing active admin email addresses.
+        existing_pending_emails (Set[str]): Set of pending invitation email addresses.
+        soft_deleted_admin_emails (Optional[Set[str]]): Set of soft-deleted (inactive) admin email addresses.
+        role_removed_admin_emails (Optional[Set[str]]): Set of active users who had admin role removed.
+
+    Returns:
+        str: Status constant indicating email state:
+            - AdminInviteStatus.INACTIVE_ADMIN if user is soft-deleted (deactivated)
+            - AdminInviteStatus.ADMIN_ROLE_REMOVED if active user had admin role removed
+            - AdminInviteStatus.EXISTING_ADMIN if user is already an active admin
+            - AdminInviteStatus.PENDING_INVITE if invitation already sent
+            - AdminInviteStatus.NEW_INVITE if this is a new invitation
+
+    Example:
+        >>> status = get_invite_status('new@example.com', set(), set(), set(), set())
+        >>> status == 'invite sent'
+        True
+    """
+    if soft_deleted_admin_emails is None:
+        soft_deleted_admin_emails = set()
+    if role_removed_admin_emails is None:
+        role_removed_admin_emails = set()
+
+    # Check soft-deleted admins first (truly inactive)
+    if email in soft_deleted_admin_emails:
+        return AdminInviteStatus.INACTIVE_ADMIN
+    # Then check role-removed (still active as learner)
+    if email in role_removed_admin_emails:
+        return AdminInviteStatus.ADMIN_ROLE_REMOVED
+    if email in existing_admin_emails:
+        return AdminInviteStatus.EXISTING_ADMIN
+    if email in existing_pending_emails:
+        return AdminInviteStatus.PENDING_INVITE
+    return AdminInviteStatus.NEW_INVITE
+
 
 User = auth.get_user_model()
 SERVICE_USERNAMES = (
