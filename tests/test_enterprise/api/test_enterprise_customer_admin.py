@@ -4,11 +4,14 @@ Tests for EnterpriseCustomerAdmin API endpoints, including invite_admins.
 """
 # --- Invite Admins Endpoint Tests ---
 
+from unittest import mock
+
 import ddt
 from edx_rbac.constants import ALL_ACCESS_CONTEXT
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from django.db import DatabaseError
 from django.urls import reverse
 
 from enterprise.constants import (
@@ -944,6 +947,20 @@ class TestInviteAdminsEndpoint(APITest):
         response = self.client.post(self.invite_url, data)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 100)
+
+    @mock.patch('enterprise.api.v1.views.enterprise_customer_admin.admin_utils.create_pending_invites')
+    def test_invite_admins_database_error_returns_500(self, mock_create_pending_invites):
+        """Test that database errors when creating invites return a controlled 500 response."""
+        self.set_jwt_admin()
+        mock_create_pending_invites.side_effect = DatabaseError('db error')
+
+        response = self.client.post(self.invite_url, {'emails': ['newadmin@example.com']})
+
+        self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        self.assertEqual(
+            response.data['detail'],
+            'Failed to create pending invites due to a database error.'
+        )
 
     def test_invite_admins_existing_admin_status(self):
         """Test that inviting an existing admin returns appropriate status."""
