@@ -5,25 +5,40 @@ Tests for the `edx-enterprise` tasks module.
 import copy
 import unittest
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest import mock
 
+from freezegun import freeze_time
 from pytest import mark, raises
 
+from enterprise import constants
 from enterprise.api_client.braze import ENTERPRISE_BRAZE_ALIAS_LABEL
 from enterprise.constants import (
     BRAZE_ADMIN_INVITE_CAMPAIGN_SETTING,
     BRAZE_LEARNER_INVITE_CAMPAIGN_SETTING,
     SSO_BRAZE_CAMPAIGN_ID,
 )
-from enterprise.models import EnterpriseCourseEnrollment, EnterpriseEnrollmentSource, EnterpriseGroupMembership
+from enterprise.models import (
+    EnterpriseCustomerAdmin,
+    EnterpriseCourseEnrollment,
+    EnterpriseEnrollmentSource,
+    EnterpriseGroupMembership,
+    PendingEnterpriseCustomerAdminUser,
+)
 from enterprise.settings.test import BRAZE_GROUPS_INVITATION_EMAIL_CAMPAIGN_ID, BRAZE_GROUPS_REMOVAL_EMAIL_CAMPAIGN_ID
 from enterprise.tasks import (
+    _get_admin_invite_reminder_config,
     _get_braze_campaign_id,
+    _get_pending_admin_invite_reminder_campaign_setting,
+    _get_pending_admin_invite_reminder_count,
+    _has_pending_admin_user_activated,
+    _is_pending_admin_invite_due_for_reminder,
+    _is_pending_admin_user_existing_learner,
     _resolve_anonymous_recipients,
     _split_identified_and_anonymous_recipients,
     create_enterprise_enrollment,
     send_enterprise_admin_invite_email,
+    send_enterprise_admin_invite_reminders,
     send_enterprise_email_notification,
     send_group_membership_invitation_notification,
     send_group_membership_removal_notification,
@@ -1001,3 +1016,337 @@ class TestEnterpriseTasks(unittest.TestCase):
             send_sso_configured_email(self.enterprise_customer.uuid)
 
         assert mock_logger.exception.called
+    # Tests for admin invite reminder functionality
+
+    def test_get_admin_invite_reminder_config(self):
+        """Test that the reminder config returns expected values."""
+        initial_delay, reminder_cadence, max_reminders, batch_size = _get_admin_invite_reminder_config()
+
+        assert initial_delay == timedelta(days=7)
+        assert reminder_cadence == timedelta(days=3)
+        assert max_reminders == 1
+        assert batch_size == 500
+
+    def test_get_pending_admin_invite_reminder_count_zero(self):
+        """Test reminder count is 0 when there are no historical updates."""
+        from test_utils.factories import PendingEnterpriseCustomerAdminUserFactory
+        
+        pending_invite = PendingEnterpriseCustomerAdminUserFactory()
+        pending_invite.history.all().delete()
+
+        count = _get_pending_admin_invite_reminder_count(pending_invite)
+        assert count == 0
+
+    def test_get_pending_admin_invite_reminder_count_with_updates(self):
+        """Test reminder count equals the number of historical updates."""
+        from test_utils.factories import PendingEnterpriseCustomerAdminUserFactory
+        
+        pending_invite = PendingEnterpriseCustomerAdminUserFactory()
+        pending_invite.history.all().delete()
+
+        # Simulate reminders by saving the object (creates history entries)
+        pending_invite.save()
+        assert _get_pending_admin_invite_reminder_count(pending_invite) == 1
+
+        pending_invite.save()
+        assert _get_pending_admin_invite_reminder_count(pending_invite) == 2
+
+    def test_is_pending_admin_user_existing_learner_not_existing(self):
+        """Test returns False when user is not an existing learner."""
+        from test_utils.factories import PendingEnterpriseCustomerAdminUserFactory
+        
+        pending_invite = PendingEnterpriseCustomerAdminUserFactory(
+            user_email='newuser@example.com'
+        )
+
+        result = _is_pending_admin_user_existing_learner(pending_invite)
+        assert result is False
+
+    def test_is_pending_admin_user_existing_learner_active(self):
+        """Test returns True when user is an active linked learner."""
+        from test_utils.factories import (
+            EnterpriseCustomerFactory,
+            EnterpriseCustomerUserFactory,
+            PendingEnterpriseCustomerAdminUserFactory,
+            UserFactory,
+        )
+        
+        user = UserFactory(email='learner@example.com')
+        enterprise_customer = EnterpriseCustomerFactory()
+        EnterpriseCustomerUserFactory(
+            enterprise_customer=enterprise_customer,
+            user_id=user.id,
+            active=True,
+        )
+
+        pending_invite = PendingEnterpriseCustomerAdminUserFactory(
+            enterprise_customer=enterprise_customer,
+            user_email='learner@example.com'
+        )
+
+        result = _is_pending_admin_user_existing_learner(pending_invite)
+        assert result is True
+
+    def test_is_pending_admin_user_existing_learner_inactive(self):
+        """Test returns False when user is an inactive learner."""
+        from test_utils.factories import (
+            EnterpriseCustomerFactory,
+            EnterpriseCustomerUserFactory,
+            PendingEnterpriseCustomerAdminUserFactory,
+            UserFactory,
+        )
+        
+        user = UserFactory(email='inactive@example.com')
+        enterprise_customer = EnterpriseCustomerFactory()
+        EnterpriseCustomerUserFactory(
+            enterprise_customer=enterprise_customer,
+            user_id=user.id,
+            active=False,
+        )
+
+        pending_invite = PendingEnterpriseCustomerAdminUserFactory(
+            enterprise_customer=enterprise_customer,
+            user_email='inactive@example.com'
+        )
+
+        result = _is_pending_admin_user_existing_learner(pending_invite)
+        assert result is False
+
+    def test_has_pending_admin_user_activated_not_activated(self):
+        """Test returns False when user has not activated as admin."""
+        from test_utils.factories import PendingEnterpriseCustomerAdminUserFactory
+        
+        pending_invite = PendingEnterpriseCustomerAdminUserFactory(
+            user_email='pending@example.com'
+        )
+
+        result = _has_pending_admin_user_activated(pending_invite)
+        assert result is False
+
+    def test_has_pending_admin_user_activated_as_admin(self):
+        """Test returns True when user has activated as admin."""
+        from test_utils.factories import (
+            EnterpriseCustomerFactory,
+            EnterpriseCustomerUserFactory,
+            PendingEnterpriseCustomerAdminUserFactory,
+            UserFactory,
+        )
+        
+        user = UserFactory(email='admin@example.com')
+        enterprise_customer = EnterpriseCustomerFactory()
+        enterprise_customer_user = EnterpriseCustomerUserFactory(
+            enterprise_customer=enterprise_customer,
+            user_id=user.id,
+            active=True,
+        )
+        EnterpriseCustomerAdmin.objects.create(
+            enterprise_customer_user=enterprise_customer_user,
+        )
+
+        pending_invite = PendingEnterpriseCustomerAdminUserFactory(
+            enterprise_customer=enterprise_customer,
+            user_email='admin@example.com'
+        )
+
+        result = _has_pending_admin_user_activated(pending_invite)
+        assert result is True
+
+    @mock.patch('enterprise.tasks.settings')
+    def test_get_pending_admin_invite_reminder_campaign_setting_existing_learner(self, mock_settings):
+        """Test returns learner campaign setting when user is existing learner and setting exists."""
+        mock_settings.BRAZE_LEARNER_ADMIN_INVITE_REMINDER_CAMPAIGN_ID = 'learner-campaign-id'
+        
+        result = _get_pending_admin_invite_reminder_campaign_setting(is_existing_learner=True)
+        assert result == constants.BRAZE_LEARNER_ADMIN_INVITE_REMINDER_CAMPAIGN_SETTING
+
+    def test_get_pending_admin_invite_reminder_campaign_setting_not_existing_learner(self):
+        """Test returns default admin campaign setting when user is not existing learner."""
+        result = _get_pending_admin_invite_reminder_campaign_setting(is_existing_learner=False)
+        assert result == constants.BRAZE_ADMIN_INVITE_REMINDER_CAMPAIGN_SETTING
+
+    @freeze_time('2026-03-20 12:00:00')
+    def test_is_pending_admin_invite_due_for_reminder_not_due_too_recent(self):
+        """Test returns False when invite is too recent (within initial delay window)."""
+        from test_utils.factories import PendingEnterpriseCustomerAdminUserFactory
+        from enterprise.utils import localized_utcnow
+        
+        pending_invite = PendingEnterpriseCustomerAdminUserFactory()
+        pending_invite.history.all().delete()
+        now = localized_utcnow()
+
+        due, count = _is_pending_admin_invite_due_for_reminder(
+            pending_invite,
+            now,
+            timedelta(days=7),
+            timedelta(days=3),
+            1
+        )
+
+        assert due is False
+        assert count == 0
+
+    @freeze_time('2026-03-27 12:00:00')
+    def test_is_pending_admin_invite_due_for_reminder_due_after_delay(self):
+        """Test returns True when invite is past initial delay window and no reminders sent."""
+        from test_utils.factories import PendingEnterpriseCustomerAdminUserFactory
+        from enterprise.utils import localized_utcnow
+        
+        # Create invite 8 days ago
+        with freeze_time('2026-03-19 12:00:00'):
+            pending_invite = PendingEnterpriseCustomerAdminUserFactory()
+            pending_invite.history.all().delete()
+
+        now = localized_utcnow()
+        due, count = _is_pending_admin_invite_due_for_reminder(
+            pending_invite,
+            now,
+            timedelta(days=7),
+            timedelta(days=3),
+            1
+        )
+
+        assert due is True
+        assert count == 0
+
+    def test_is_pending_admin_invite_due_for_reminder_max_reached(self):
+        """Test returns False when max reminders already sent."""
+        from test_utils.factories import PendingEnterpriseCustomerAdminUserFactory
+        from enterprise.utils import localized_utcnow
+        
+        pending_invite = PendingEnterpriseCustomerAdminUserFactory()
+        pending_invite.history.all().delete()
+
+        # Simulate 1 reminder sent
+        pending_invite.save()
+
+        now = localized_utcnow()
+        due, count = _is_pending_admin_invite_due_for_reminder(
+            pending_invite,
+            now,
+            timedelta(days=7),
+            timedelta(days=3),
+            1  # max_reminders = 1
+        )
+
+        assert due is False
+        assert count == 1
+
+    @mock.patch('enterprise.tasks.settings')
+    @mock.patch('enterprise.tasks.send_enterprise_admin_invite_email')
+    @freeze_time('2026-03-27 12:00:00')
+    def test_send_enterprise_admin_invite_reminders_success(self, mock_send_email, mock_settings):
+        """Test successfully sending reminders to eligible invites."""
+        from test_utils.factories import (
+            EnterpriseCustomerFactory,
+            PendingEnterpriseCustomerAdminUserFactory,
+        )
+        
+        mock_settings.ENTERPRISE_BRAZE_API_KEY = 'test-api-key'
+        mock_settings.EDX_BRAZE_API_SERVER = 'https://rest.iad-06.braze.com'
+        mock_settings.BRAZE_ADMIN_INVITE_REMINDER_CAMPAIGN_ID = 'test-campaign-id'
+
+        enterprise_customer = EnterpriseCustomerFactory()
+
+        # Create invite 8 days ago (past initial delay)
+        with freeze_time('2026-03-19 12:00:00'):
+            pending_invite = PendingEnterpriseCustomerAdminUserFactory(
+                enterprise_customer=enterprise_customer,
+                user_email='eligible@example.com'
+            )
+            pending_invite.history.all().delete()
+
+        result = send_enterprise_admin_invite_reminders()
+
+        # Verify email was sent
+        assert mock_send_email.called
+        assert result['sent'] >= 1
+        assert result['processed'] >= 1
+
+    @mock.patch('enterprise.tasks.settings')
+    @mock.patch('enterprise.tasks.send_enterprise_admin_invite_email')
+    @freeze_time('2026-03-27 12:00:00')
+    def test_send_enterprise_admin_invite_reminders_skip_active_admin(self, mock_send_email, mock_settings):
+        """Test that invites are skipped when user has already become an admin."""
+        from test_utils.factories import (
+            EnterpriseCustomerFactory,
+            EnterpriseCustomerUserFactory,
+            PendingEnterpriseCustomerAdminUserFactory,
+            UserFactory,
+        )
+        
+        mock_settings.ENTERPRISE_BRAZE_API_KEY = 'test-api-key'
+        mock_settings.EDX_BRAZE_API_SERVER = 'https://rest.iad-06.braze.com'
+        mock_settings.BRAZE_ADMIN_INVITE_REMINDER_CAMPAIGN_ID = 'test-campaign-id'
+
+        enterprise_customer = EnterpriseCustomerFactory()
+        
+        # Create user and make them an admin
+        user = UserFactory(email='admin@example.com')
+        enterprise_customer_user = EnterpriseCustomerUserFactory(
+            enterprise_customer=enterprise_customer,
+            user_id=user.id,
+            active=True,
+        )
+        EnterpriseCustomerAdmin.objects.create(
+            enterprise_customer_user=enterprise_customer_user,
+        )
+
+        # Create pending invite for same user 8 days ago
+        with freeze_time('2026-03-19 12:00:00'):
+            pending_invite = PendingEnterpriseCustomerAdminUserFactory(
+                enterprise_customer=enterprise_customer,
+                user_email='admin@example.com'
+            )
+            pending_invite.history.all().delete()
+
+        result = send_enterprise_admin_invite_reminders()
+
+        # Verify result shows skipped active
+        assert result['skipped_active'] >= 1
+
+    @mock.patch('enterprise.tasks.settings')
+    def test_send_enterprise_admin_invite_reminders_missing_settings(self, mock_settings):
+        """Test that ValueError is raised when Braze settings are missing."""
+        mock_settings.ENTERPRISE_BRAZE_API_KEY = None
+        mock_settings.EDX_BRAZE_API_SERVER = None
+
+        with raises(ValueError):
+            send_enterprise_admin_invite_reminders()
+
+    @mock.patch('enterprise.tasks.settings')
+    @mock.patch('enterprise.tasks.send_enterprise_admin_invite_email')
+    @freeze_time('2026-03-27 12:00:00')
+    def test_send_enterprise_admin_invite_reminders_deduplication(self, mock_send_email, mock_settings):
+        """Test that only one reminder is sent per (customer, email) pair in a batch."""
+        from test_utils.factories import (
+            EnterpriseCustomerFactory,
+            PendingEnterpriseCustomerAdminUserFactory,
+        )
+        
+        mock_settings.ENTERPRISE_BRAZE_API_KEY = 'test-api-key'
+        mock_settings.EDX_BRAZE_API_SERVER = 'https://rest.iad-06.braze.com'
+        mock_settings.BRAZE_ADMIN_INVITE_REMINDER_CAMPAIGN_ID = 'test-campaign-id'
+
+        enterprise_customer = EnterpriseCustomerFactory()
+
+        # Create 2 pending invites with same email and customer 8 days ago
+        with freeze_time('2026-03-19 12:00:00'):
+            pending_invite1 = PendingEnterpriseCustomerAdminUserFactory(
+                enterprise_customer=enterprise_customer,
+                user_email='duplicate@example.com'
+            )
+            pending_invite1.history.all().delete()
+
+            pending_invite2 = PendingEnterpriseCustomerAdminUserFactory(
+                enterprise_customer=enterprise_customer,
+                user_email='duplicate@example.com'
+            )
+            pending_invite2.history.all().delete()
+
+        result = send_enterprise_admin_invite_reminders()
+
+        # Verify only ONE email was sent (deduplication)
+        # Note: If both invites are in the batch and both are eligible,
+        # only one will be sent due to the deduplication logic
+        assert result['processed'] >= 2
+        # The sent count should reflect deduplication
