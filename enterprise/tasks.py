@@ -597,7 +597,6 @@ def send_enterprise_admin_invite_reminders():  # pylint: disable=too-many-statem
                 )
 
                 send_enterprise_admin_invite_email(
-                    None,
                     str(pending_invite.enterprise_customer.uuid),
                     pending_invite.user_email,
                     reminder_campaign_setting,
