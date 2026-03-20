@@ -36,11 +36,11 @@ class Command(BaseCommand):
         Execute the command to send pending admin reminders.
         """
         log.info('Starting send_pending_admin_reminders management command')
-        
+
         try:
             # Call the task function directly (not via Celery)
             result = send_enterprise_admin_invite_reminders()
-            
+
             log.info(
                 'Completed send_pending_admin_reminders: '
                 'processed=%d, sent=%d, skipped_active=%d, skipped_not_due=%d, '
@@ -52,15 +52,15 @@ class Command(BaseCommand):
                 result.get('skipped_max', 0),
                 result.get('failures', 0)
             )
-            
+
             self.stdout.write(
                 self.style.SUCCESS(
                     f"Successfully sent {result.get('sent', 0)} reminder(s) "
                     f"out of {result.get('processed', 0)} pending invite(s)"
                 )
             )
-            
-        except Exception as exc:  # pylint: disable=broad-except
+
+        except Exception as exc:
             log.exception('Error executing send_pending_admin_reminders command')
             self.stderr.write(
                 self.style.ERROR(f'Failed to send reminders: {str(exc)}')

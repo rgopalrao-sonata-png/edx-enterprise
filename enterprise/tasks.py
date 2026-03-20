@@ -506,7 +506,7 @@ def _is_pending_admin_invite_due_for_reminder(
 
 @shared_task
 @set_code_owner_attribute
-def send_enterprise_admin_invite_reminders():
+def send_enterprise_admin_invite_reminders():  # pylint: disable=too-many-statements
     """
     Send reminder Braze campaign messages for inactive pending admin invites.
 
@@ -554,14 +554,23 @@ def send_enterprise_admin_invite_reminders():
                     enterprise_customer_user__user_fk__email__iexact=pending_invite.user_email,
                 ).exists()
                 if admin_exists:
-                    LOGGER.info('SKIP: User is already an admin for enterprise %s', pending_invite.enterprise_customer_id)
+                    LOGGER.info(
+                        'SKIP: User is already an admin for enterprise %s',
+                        pending_invite.enterprise_customer_id
+                    )
                     skipped_active += 1
                     continue
 
                 # Ensure only one reminder per (customer_id, email)
-                customer_email_key = (pending_invite.enterprise_customer_id, pending_invite.user_email.strip().lower())
+                customer_email_key = (
+                    pending_invite.enterprise_customer_id,
+                    pending_invite.user_email.strip().lower()
+                )
                 if customer_email_key in sent_customer_email_set:
-                    LOGGER.info('SKIP: Reminder already sent for customer %s in this batch', pending_invite.enterprise_customer_id)
+                    LOGGER.info(
+                        'SKIP: Reminder already sent for customer %s in this batch',
+                        pending_invite.enterprise_customer_id
+                    )
                     continue
 
                 is_existing_learner = _is_pending_admin_user_existing_learner(pending_invite)
@@ -588,6 +597,7 @@ def send_enterprise_admin_invite_reminders():
                 )
 
                 send_enterprise_admin_invite_email(
+                    None,
                     str(pending_invite.enterprise_customer.uuid),
                     pending_invite.user_email,
                     reminder_campaign_setting,
@@ -606,7 +616,8 @@ def send_enterprise_admin_invite_reminders():
             LOGGER.exception('Failed sending admin invite reminder for pending invite id=%s', invite_id)
 
     LOGGER.info(
-        'Processed %d pending admin invites for reminders (sent=%d skipped_active=%d skipped_not_due=%d skipped_max=%d failures=%d).',
+        'Processed %d pending admin invites for reminders '
+        '(sent=%d skipped_active=%d skipped_not_due=%d skipped_max=%d failures=%d).',
         len(candidate_invite_ids),
         reminders_sent,
         skipped_active,
