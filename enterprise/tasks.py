@@ -518,18 +518,10 @@ def send_enterprise_admin_invite_reminders():
     initial_delay_window, reminder_cadence_window, max_reminders, batch_size = _get_admin_invite_reminder_config()
     now = localized_utcnow()
 
-    # Ensure all pending_invite.created and modified are timezone-aware
-    from django.utils.timezone import make_aware, is_naive
-
-    def ensure_aware(dt):
-        if is_naive(dt):
-            return make_aware(dt)
-        return dt
-
     _get_braze_campaign_id(constants.BRAZE_ADMIN_INVITE_REMINDER_CAMPAIGN_SETTING)
 
     pending_invite_model = pending_enterprise_customer_admin_user_model()
-    LOGGER.info(f"pending_invite_model: {pending_invite_model}")
+    LOGGER.info('pending_invite_model: %s', pending_invite_model)
     first_reminder_cutoff = now - initial_delay_window
     candidate_invite_ids = list(
         pending_invite_model.objects.filter(
@@ -537,7 +529,7 @@ def send_enterprise_admin_invite_reminders():
         ).order_by('created').values_list('id', flat=True)[:batch_size]
     )
 
-    LOGGER.info(f"candidate_invite_ids: {candidate_invite_ids}")
+    LOGGER.info('Found %d candidate invite(s) for reminders', len(candidate_invite_ids))
     reminders_sent = 0
     sent_emails = []
     skipped_active = 0
@@ -562,14 +554,14 @@ def send_enterprise_admin_invite_reminders():
                     enterprise_customer_user__user_fk__email__iexact=pending_invite.user_email,
                 ).exists()
                 if admin_exists:
-                    LOGGER.info(f"SKIP: User is already an admin for enterprise {pending_invite.enterprise_customer_id}")
+                    LOGGER.info('SKIP: User is already an admin for enterprise %s', pending_invite.enterprise_customer_id)
                     skipped_active += 1
                     continue
 
                 # Ensure only one reminder per (customer_id, email)
                 customer_email_key = (pending_invite.enterprise_customer_id, pending_invite.user_email.strip().lower())
                 if customer_email_key in sent_customer_email_set:
-                    LOGGER.info(f"SKIP: Reminder already sent for customer {pending_invite.enterprise_customer_id} in this batch.")
+                    LOGGER.info('SKIP: Reminder already sent for customer %s in this batch', pending_invite.enterprise_customer_id)
                     continue
 
                 is_existing_learner = _is_pending_admin_user_existing_learner(pending_invite)
@@ -589,8 +581,7 @@ def send_enterprise_admin_invite_reminders():
                         skipped_not_due += 1
                     continue
 
-                log_msg = f"SEND: Pending admin invite id={invite_id} will receive reminder #{reminder_count + 1}."
-                LOGGER.info(log_msg)
+                LOGGER.info('SEND: Pending admin invite id=%s will receive reminder #%d', invite_id, reminder_count + 1)
 
                 reminder_campaign_setting = _get_pending_admin_invite_reminder_campaign_setting(
                     is_existing_learner,

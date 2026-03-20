@@ -62,7 +62,7 @@ class Command(BaseCommand):
             
         except Exception as exc:  # pylint: disable=broad-except
             log.exception('Error executing send_pending_admin_reminders command')
-            self.stdout.write(
+            self.stderr.write(
                 self.style.ERROR(f'Failed to send reminders: {str(exc)}')
             )
             raise
