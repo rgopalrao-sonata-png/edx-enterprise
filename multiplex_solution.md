@@ -692,6 +692,253 @@ graph TB
 
 ---
 
+## Expert Analysis: Pros, Cons, and Best Solution
+
+### What the Multi-License Solution Gets Right
+
+| Area | Pros | Why It Matters |
+|------|------|----------------|
+| **Business flexibility** | Supports multiple concurrent catalogs per learner | Enables Knotion-style learning pathways, cross-training, and budget-separated entitlements |
+| **Correctness** | Prevents premature loss of license data | A learner can only be matched correctly if all valid licenses remain available until course-level evaluation |
+| **Backward compatibility** | Keeps legacy singular fields during migration | Reduces rollout risk and avoids breaking older clients |
+| **Operational safety** | Uses feature flags in both BFF and MFE | Allows gradual rollout, tenant allowlisting, and instant rollback |
+| **User experience** | Matches the correct license to the course being viewed | Learners see access they actually paid for instead of false denials |
+| **Performance awareness** | Adds `licenses_by_catalog` index | Keeps matching efficient and avoids repeated linear scans |
+| **Debuggability** | Deterministic tie-breaker + logging | Makes support investigations reproducible and easier to explain |
+| **Extensibility** | Establishes collection-first contract | Creates a foundation for future capabilities like learner choice, analytics, and per-license notifications |
+
+### Main Trade-offs and Risks
+
+| Area | Cons / Risks | Why It Matters |
+|------|---------------|----------------|
+| **Higher complexity** | Data model and client logic become more complex than single-license assumptions | More branches, more edge cases, more testing burden |
+| **Temporary schema duplication** | Both singular and plural fields coexist during migration | Increases payload size and creates short-term conceptual duplication |
+| **Selection-policy disputes** | “Best” license is a business rule, not a purely technical truth | Different customers may prefer expiration-based, priority-based, or user-chosen behavior |
+| **Cross-layer coordination** | BFF and MFE must evolve in sync | Misalignment can cause inconsistent entitlement behavior |
+| **Performance scaling risk** | More licenses per learner increases filtering and indexing cost | Usually manageable, but should be validated with production-like data |
+| **Operational visibility needs** | Harder to debug if logs and metrics are missing | Multi-license systems fail silently if selection rationale is not observable |
+| **Migration burden** | Old consumers may continue using deprecated fields too long | Requires explicit deprecation timeline and communication |
+| **Edge-case ambiguity** | Overlapping catalogs, mixed statuses, revoked licenses, stale cache scenarios | Needs precise tests and deterministic rules |
+
+### Expert Review of the Key Architectural Choice
+
+The core architectural decision in this document is to move from **early singular selection** to **collection-first preservation with deferred per-course selection**.
+
+This is the right choice.
+
+#### Why early selection is a poor fit
+
+Selecting one license in the BFF or data layer is attractive because it is simple, but it is fundamentally incorrect for multi-catalog learners because:
+
+1. The system does not yet know which course context matters.
+2. A “best” license globally may be the wrong license for a specific course.
+3. Discarded licenses cannot be recovered downstream.
+
+That means early selection optimizes for simplicity at the cost of entitlement correctness.
+
+#### Why deferred selection is stronger
+
+Deferred selection works better because:
+
+1. It preserves all valid entitlements.
+2. It lets course-level logic make a context-aware decision.
+3. It supports deterministic business rules when overlaps occur.
+4. It scales to future needs like learner override or policy-based selection.
+
+From an architecture standpoint, this is the cleanest separation of concerns:
+
+- **License Manager** stores and returns facts.
+- **BFF** shapes and enriches facts.
+- **MFE/domain logic** decides applicability in context.
+
+### Alternatives Considered
+
+#### Option A: Keep single-license behavior
+
+**Pros:**
+- Lowest engineering effort
+- No schema changes
+- Minimal rollout risk
+
+**Cons:**
+- Does not solve the business problem
+- Continues false access denials
+- Blocks multi-catalog enterprise use cases
+
+**Expert verdict:** Not viable.
+
+#### Option B: Pick one “best” license centrally in the BFF
+
+**Pros:**
+- Easier frontend changes
+- Centralized business logic
+- Smaller payloads than full collection-first
+
+**Cons:**
+- Still loses information too early
+- “Best” license varies by course context
+- Makes overlap handling brittle
+
+**Expert verdict:** Better than current state, but still architecturally weak.
+
+#### Option C: Full collection-first with deferred selection at course context
+
+**Pros:**
+- Correct entitlement behavior
+- Strong separation of concerns
+- Best support for future extensibility
+- Works with overlapping and catalog-specific licenses
+
+**Cons:**
+- Highest implementation complexity
+- Requires migration discipline
+- Needs good observability and tests
+
+**Expert verdict:** Best long-term solution.
+
+### Best Solution Recommendation
+
+The best solution is:
+
+> **Collection-first multi-license architecture with BFF-side enrichment, MFE-side contextual selection, deterministic tie-breaking, backward-compatible schema evolution, and feature-flagged rollout.**
+
+### Recommended Final Shape
+
+#### 1. Canonical data contract
+- `subscription_licenses` is the source of truth.
+- `subscription_licenses_by_status` and `licenses_by_catalog` are derived helpers.
+- `subscription_license` and `subscription_plan` remain temporary compatibility fields only.
+
+#### 2. Selection responsibility
+- Do **not** select one global license in the BFF for all downstream behavior.
+- Perform **course-specific applicability filtering** as close to course context as possible.
+- Apply a deterministic selector only after filtering to applicable licenses.
+
+#### 3. Deterministic policy
+Use this precedence order unless business stakeholders define a better one:
+1. Current and activated only
+2. Matching catalog only
+3. Latest expiration date
+4. Most recent activation date
+5. Stable UUID fallback
+
+This is strong because it is explainable, testable, and reproducible.
+
+#### 4. Performance approach
+- Precompute `licenses_by_catalog` in the BFF or MFE transformation layer.
+- Avoid repeated full scans when the learner visits multiple course pages.
+- Measure real-world license-count distribution before adding heavier caching.
+
+#### 5. Rollout approach
+- Keep the dual feature-flag model.
+- Pilot with one customer first.
+- Maintain legacy fields for a fixed deprecation window.
+- Instrument selection decisions from day one.
+
+### Additional Expert Recommendations
+
+To make this solution stronger in production, I recommend these additions:
+
+#### A. Formalize license selection as a standalone domain utility
+Selection should not live only inside hooks or handlers. It should exist as an isolated, well-tested utility with identical behavior across layers where possible.
+
+#### B. Prevent policy drift between BFF and MFE
+If both layers can select licenses, they must use the same rules. Otherwise, enrollment and UI visibility can diverge.
+
+#### C. Define customer-facing semantics early
+Decide now whether “best license” means:
+- longest access window,
+- lowest cost to customer,
+- preferred catalog priority,
+- admin-configured preference, or
+- learner choice.
+
+Today’s expiration-based rule is sensible, but it is still a policy choice.
+
+#### D. Treat observability as mandatory, not optional
+For every selection, log:
+- total licenses considered,
+- applicable licenses after filtering,
+- selected license UUID,
+- tie-break reason,
+- feature flag state.
+
+Without this, support and rollout risk increase substantially.
+
+#### E. Keep deprecation strict
+Do not let compatibility fields become permanent. Publish a timeline, track consumers, and remove them on schedule.
+
+### Final Expert Verdict
+
+#### Overall assessment
+The proposed multi-license solution is **architecturally strong and strategically correct**.
+
+#### Biggest strengths
+- Solves the actual business problem
+- Uses the right abstraction boundary
+- Preserves correctness without forcing a risky platform-wide rewrite
+- Supports safe rollout and rollback
+
+#### Biggest weaknesses
+- Higher temporary complexity
+- Requires disciplined testing, migration, and monitoring
+- Selection policy may need future refinement as enterprise use cases expand
+
+#### Best solution
+If the goal is to balance **correctness, safety, extensibility, and delivery speed**, the best solution is the one described in this document: **collection-first preservation plus deferred contextual selection**, with indexing, feature flags, and backward compatibility.
+
+---
+
+## Executive Recommendation Short Version
+
+### Recommended approach
+
+The best solution is to **preserve all licenses end-to-end and select the applicable license only in course context**.
+
+In practical terms, that means:
+- keep `subscription_licenses` as the canonical source of truth,
+- optionally provide `licenses_by_catalog` for faster lookups,
+- keep legacy singular fields only for temporary backward compatibility,
+- use a deterministic tie-breaker when more than one license matches,
+- roll out behind feature flags in both BFF and MFE.
+
+### Why this is the best solution
+
+This approach is best because it:
+- solves the real business problem,
+- prevents entitlement data loss,
+- supports multiple catalogs per learner,
+- preserves backward compatibility,
+- allows safe phased rollout,
+- creates a clean foundation for future enhancements.
+
+### Main pros
+
+- Correct access decisions per course
+- Better learner experience
+- Stronger business flexibility for enterprise customers
+- Safe migration path with rollback support
+- Good long-term architecture for future features
+
+### Main cons
+
+- Higher implementation complexity
+- More testing and monitoring required
+- Temporary schema duplication during migration
+- Selection policy may need refinement later
+
+### Final recommendation
+
+Use **Option C: collection-first with deferred per-course selection**.
+
+Avoid:
+- keeping the current single-license model,
+- or selecting one global “best” license too early in the BFF.
+
+If needed, this short section can be used as the leadership or stakeholder summary for the document.
+
+---
+
 ## Detailed Design
 
 ### Component 1: License Manager (No Changes)
