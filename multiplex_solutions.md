@@ -290,55 +290,6 @@ graph TB
 
 ---
 
-### Performance: O(n) vs O(1) Catalog Lookup
-
-```mermaid
-graph LR
-    subgraph "Without Index O(n) per course"
-        W1[Course Page Load] --> W2[Get A, B, C licenses]
-        W2 --> W3[Course X in Catalog-B]
-        W3 --> W4[❌ Linear Scan:<br/>A.catalog = B? No<br/>B.catalog = B? Yes<br/>C.catalog = B? No]
-        W4 --> W5[Found: B]
-        W5 --> W6[Course Y in Catalog-C]
-        W6 --> W7[❌ Linear Scan AGAIN:<br/>A.catalog = C? No<br/>B.catalog = C? No<br/>C.catalog = C? Yes]
-        style W4 fill:#ffcdd2,stroke:#c62828
-        style W7 fill:#ffcdd2,stroke:#c62828
-    end
-
-    subgraph "With Index O(1) per course"
-        I1[Course Page Load] --> I2["Get licensesByCatalog:<br/>{cat-A: A, cat-B: B, cat-C: C}"]
-        I2 --> I3[Course X in Catalog-B]
-        I3 --> I4[✅ O(1): licensesByCatalog[cat-B] → B]
-        I4 --> I5[Found: B]
-        I5 --> I6[Course Y in Catalog-C]
-        I6 --> I7[✅ O(1): licensesByCatalog[cat-C] → C]
-        style I4 fill:#c8e6c9,stroke:#388e3c,stroke-width:2px
-        style I7 fill:#c8e6c9,stroke:#388e3c,stroke-width:2px
-    end
-```
-
----
-
-### API Schema Evolution
-
-```mermaid
-graph TB
-    subgraph "Schema Versions"
-        V1["v1 - Current<br/>━━━━━━━━━━<br/>subscription_license: object<br/>subscription_plan: object"]
-
-        V2["v2 - Flag ON<br/>━━━━━━━━━━<br/>subscription_licenses: list ✅<br/>licenses_by_catalog: object ✅<br/>subscription_license: object ⚠️ COMPAT<br/>subscription_plan: object ⚠️ COMPAT<br/>license_schema_version: v2"]
-
-        V3["v3 - 6 months later<br/>━━━━━━━━━━<br/>subscription_licenses: list ✅<br/>licenses_by_catalog: object ✅<br/>license_schema_version: v3<br/>(deprecated fields removed)"]
-    end
-
-    V1 --> V2 --> V3
-
-    style V1 fill:#ffcdd2,stroke:#c62828
-    style V2 fill:#fff9c4,stroke:#f57f17
-    style V3 fill:#a5d6a7,stroke:#2e7d32,stroke-width:3px
-```
-
----
 
 ## Architectural Principles
 
