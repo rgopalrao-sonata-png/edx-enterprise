@@ -78,10 +78,10 @@ graph TB
         P7[😞 Result<br/>Alice CANNOT access<br/>Technical Training course<br/>Even though she has License B!]
         
         P1 --> P2
-        P2 -->|A, B, C| P3
-        P3 -->|A only| P4
-        P4 -->|A only| P5
-        P5 -->|A only| P6
+        P2 -->|3 licenses| P3
+        P3 -->|1st only| P4
+        P4 -->|1st only| P5
+        P5 -->|1st only| P6
         P6 --> P7
         
         style P3 fill:#ff6b6b,stroke:#c92a2a,color:#fff
@@ -108,10 +108,10 @@ graph TB
         S7[😊 Result<br/>Alice CAN access<br/>Technical Training course<br/>Using License B!]
         
         S1 --> S2
-        S2 -->|A, B, C| S3
-        S3 -->|A, B, C| S4
-        S4 -->|A, B, C| S5
-        S5 -->|A, B, C| S6
+        S2 -->|3 licenses| S3
+        S3 -->|3 licenses| S4
+        S4 -->|3 licenses| S5
+        S5 -->|3 licenses| S6
         S6 --> S7
         
         style S3 fill:#51cf66,stroke:#2f9e44,color:#fff
@@ -137,11 +137,11 @@ sequenceDiagram
     Note over Alice,Course: ❌ CURRENT BROKEN FLOW
     
     Alice->>LM: Request my licenses
-    LM-->>BFF: Returns [License A, B, C] ✅
+    LM-->>BFF: Returns License A, B, C ✅
     
     rect rgb(255, 200, 200)
         Note right of BFF: Bottleneck #1<br/>_extract_subscription_license()
-        BFF->>BFF: next([A,B,C]) → selects A only
+        BFF->>BFF: selects A only from all licenses
         Note right of BFF: Lost: B, C ❌
     end
     
@@ -173,13 +173,13 @@ sequenceDiagram
     Note over Alice,Course: ✅ NEW FIXED FLOW
     
     Alice->>LM: Request my licenses
-    LM-->>BFF: Returns [License A, B, C] ✅
+    LM-->>BFF: Returns License A, B, C ✅
     
     rect rgb(200, 255, 200)
         Note right of BFF: Enhancement #1<br/>transform_licenses()
         BFF->>BFF: Preserve ALL licenses
         BFF->>BFF: Build catalog index
-        Note right of BFF: [A, B, C] available ✅
+        Note right of BFF: All 3 licenses available ✅
     end
     
     rect rgb(200, 255, 200)
@@ -189,13 +189,13 @@ sequenceDiagram
         Note right of BFF: Auto-enrollment with<br/>correct license!
     end
     
-    BFF-->>MFE: Response with [A, B, C] + catalog index
+    BFF-->>MFE: Response with all 3 licenses + catalog index
     
     rect rgb(200, 255, 200)
         Note right of MFE: Enhancement #3<br/>transformSubscriptionsData()
         MFE->>MFE: Preserve ALL licenses
         MFE->>MFE: Build catalog index
-        Note right of MFE: [A, B, C] in state ✅
+        Note right of MFE: All 3 licenses in state ✅
     end
     
     Alice->>Course: Navigate to Course-X<br/>(in Catalog-B)
@@ -204,7 +204,7 @@ sequenceDiagram
         Note right of Course: Enhancement #4<br/>getApplicableLicenses()
         Course->>Course: Filter licenses by Catalog-B
         Course->>Course: Found: License B ✅
-        Course->>Course: selectBestLicense([B]) → B
+        Course->>Course: selectBestLicense picks B
     end
     
     Course-->>Alice: ✅ Access Granted with License B
@@ -383,13 +383,13 @@ graph TB
         UI[Course Page<br/>━━━━━━━━━━━━━━<br/>Display correct access<br/>based on applicable license]
     end
     
-    LM -->|A, B, C| BFF1
-    BFF1 -->|A, B, C| BFF2
-    BFF2 -->|A, B, C| BFF3
-    BFF3 -->|A, B, C| MFE1
-    MFE1 -->|A, B, C| MFE2
-    MFE2 -->|A, B, C| MFE3
-    MFE3 -->|Best match| UI
+    LM -->|all licenses| BFF1
+    BFF1 -->|all licenses| BFF2
+    BFF2 -->|all licenses| BFF3
+    BFF3 -->|all licenses| MFE1
+    MFE1 -->|all licenses| MFE2
+    MFE2 -->|all licenses| MFE3
+    MFE3 -->|best match| UI
     
     style LM fill:#e3f2fd,stroke:#1976d2
     style BFF1 fill:#fff3e0,stroke:#f57c00
@@ -550,12 +550,12 @@ graph LR
     subgraph "With Index O(1) per course"
         I1[Course Page Load] --> I2["Get licensesByCatalog<br/>{<br/>  cat-A: A,<br/>  cat-B: B,<br/>  cat-C: C<br/>}"]
         I2 --> I3[For Course X<br/>in Catalog-B]
-        I3 --> I4[✅ O1 Lookup<br/>licensesByCatalog['cat-B']<br/>= [B]]
+        I3 --> I4[✅ O1 Lookup<br/>licensesByCatalog cat-B<br/>returns License B]
         I4 --> I5[Found: License B]
         
         I6[For Course Y<br/>in Catalog-C]
         I5 --> I6
-        I6 --> I7[✅ O1 Lookup<br/>licensesByCatalog['cat-C']<br/>= [C]]
+        I6 --> I7[✅ O1 Lookup<br/>licensesByCatalog cat-C<br/>returns License C]
         I7 --> I8[Found: License C]
         
         style I4 fill:#c8e6c9,stroke:#388e3c,stroke-width:2px
@@ -654,9 +654,9 @@ graph TB
         C3[MFE<br/>Selects FIRST ❌]
         C4[Course Page<br/>Uses FIRST ❌]
         
-        C1 -->|A,B,C| C2
-        C2 -->|A only| C3
-        C3 -->|A only| C4
+        C1 -->|all licenses| C2
+        C2 -->|first only| C3
+        C3 -->|first only| C4
     end
     
     subgraph "Target State (Collection-First)"
@@ -665,9 +665,9 @@ graph TB
         T3[MFE<br/>Receives ALL ✓]
         T4[Course Page<br/>Matches BEST ✓]
         
-        T1 -->|A,B,C| T2
-        T2 -->|A,B,C| T3
-        T3 -->|A,B,C| T4
+        T1 -->|all licenses| T2
+        T2 -->|all licenses| T3
+        T3 -->|all licenses| T4
         T4 -->|Select B for<br/>catalog-B course| T4
     end
     
