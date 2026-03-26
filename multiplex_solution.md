@@ -97,11 +97,11 @@ graph TB
         
         S2[🔍 License Manager API<br/>Returns ALL 3 licenses ✅]
         
-        S3[✅ BFF Enhancement #1<br/>transform_licenses<br/>PRESERVES all 3 licenses<br/>Result: [A, B, C] ✓]
+        S3["✅ BFF Enhancement #1<br/>transform_licenses<br/>PRESERVES all 3 licenses<br/>Result: A, B, C ✓"]
         
         S4[✅ BFF Enhancement #2<br/>map_courses_to_licenses<br/>Matches EACH course to best license<br/>Course-X → License B ✓]
         
-        S5[✅ MFE Enhancement #3<br/>transformSubscriptionsData<br/>Keeps ALL licenses in state<br/>Result: [A, B, C] ✓]
+        S5["✅ MFE Enhancement #3<br/>transformSubscriptionsData<br/>Keeps ALL licenses in state<br/>Result: A, B, C ✓"]
         
         S6[✅ MFE Enhancement #4<br/>Course Page<br/>Filters all licenses for Catalog B<br/>Finds License B ✓]
         
@@ -219,12 +219,12 @@ sequenceDiagram
 graph LR
     subgraph "Bottleneck #1: BFF License Extraction"
         B1A[❌ OLD CODE<br/>_extract_subscription_license]
-        B1B["next(license for status in [ACTIVATED]<br/>for license in licenses[status])<br/><br/>Returns FIRST license only"]
-        B1C[Input: [A, B, C]<br/>Output: A<br/>Lost: B, C ❌]
+        B1B["next(license for status in ACTIVATED<br/>for license in licenses.status)<br/><br/>Returns FIRST license only"]
+        B1C["Input: A, B, C<br/>Output: A<br/>Lost: B, C ❌"]
         
         B1D[✅ NEW CODE<br/>transform_licenses]
-        B1E["subscription_licenses: [A, B, C]<br/>licenses_by_catalog: {<br/>  'cat-A': [A],<br/>  'cat-B': [B],<br/>  'cat-C': [C]<br/>}<br/><br/>Preserves ALL licenses"]
-        B1F[Input: [A, B, C]<br/>Output: [A, B, C]<br/>Lost: Nothing ✅]
+        B1E["subscription_licenses: A, B, C<br/>licenses_by_catalog: {<br/>  cat-A: A,<br/>  cat-B: B,<br/>  cat-C: C<br/>}<br/><br/>Preserves ALL licenses"]
+        B1F["Input: A, B, C<br/>Output: A, B, C<br/>Lost: Nothing ✅"]
         
         B1A --> B1B --> B1C
         B1D --> B1E --> B1F
@@ -256,11 +256,11 @@ graph LR
     subgraph "Bottleneck #3: MFE Data Transform"
         B3A[❌ OLD CODE<br/>transformSubscriptionsData]
         B3B["Object.values<br/>  licensesByStatus<br/>.flat at index 0<br/><br/>Extracts FIRST license"]
-        B3C[Input: [A, B, C]<br/>subscriptionLicense: A<br/>Lost: B, C ❌]
+        B3C["Input: A, B, C<br/>subscriptionLicense: A<br/>Lost: B, C ❌"]
         
         B3D[✅ NEW CODE<br/>transformSubscriptionsData]
-        B3E["subscriptionLicenses: [A,B,C]<br/>licensesByCatalog: {<br/>  'cat-A': [A],<br/>  'cat-B': [B],<br/>  'cat-C': [C]<br/>}<br/><br/>Preserves ALL + index"]
-        B3F[Input: [A, B, C]<br/>subscriptionLicenses: [A,B,C]<br/>Lost: Nothing ✅]
+        B3E["subscriptionLicenses: A,B,C<br/>licensesByCatalog: {<br/>  cat-A: A,<br/>  cat-B: B,<br/>  cat-C: C<br/>}<br/><br/>Preserves ALL + index"]
+        B3F["Input: A, B, C<br/>subscriptionLicenses: A,B,C<br/>Lost: Nothing ✅"]
         
         B3A --> B3B --> B3C
         B3D --> B3E --> B3F
@@ -493,11 +493,11 @@ graph TB
     subgraph "API Response Evolution"
         V1[v1 Response<br/>━━━━━━━━━━<br/>subscription_license: {...}<br/>subscription_plan: {...}<br/><br/>Single license only]
         
-        V2[v2 Response Feature Flag OFF<br/>━━━━━━━━━━━━━━━━━━━━━<br/>subscription_licenses: [A, B, C]<br/>subscription_license: A ⚠️ COMPAT<br/>subscription_plan: {...} ⚠️ COMPAT<br/>license_schema_version: "v1"<br/><br/>Collection + legacy fields]
+        V2["v2 Response Feature Flag OFF<br/>━━━━━━━━━━━━━━━━━━━━━<br/>subscription_licenses: A, B, C<br/>subscription_license: A ⚠️ COMPAT<br/>subscription_plan: {...} ⚠️ COMPAT<br/>license_schema_version: v1<br/><br/>Collection + legacy fields"]
         
-        V2Active[v2 Response Feature Flag ON<br/>━━━━━━━━━━━━━━━━━━━━━<br/>subscription_licenses: [A, B, C] ✅<br/>licenses_by_catalog: {...} ✅<br/>subscription_license: A ⚠️ COMPAT<br/>subscription_plan: {...} ⚠️ COMPAT<br/>license_schema_version: "v2"<br/><br/>Full multi-license support]
+        V2Active["v2 Response Feature Flag ON<br/>━━━━━━━━━━━━━━━━━━━━━<br/>subscription_licenses: A, B, C ✅<br/>licenses_by_catalog: {...} ✅<br/>subscription_license: A ⚠️ COMPAT<br/>subscription_plan: {...} ⚠️ COMPAT<br/>license_schema_version: v2<br/><br/>Full multi-license support"]
         
-        V3[v3 Response 6 months later<br/>━━━━━━━━━━━━━━━━━━━━━<br/>subscription_licenses: [A, B, C] ✅<br/>licenses_by_catalog: {...} ✅<br/>license_schema_version: "v3"<br/><br/>Deprecated fields removed]
+        V3["v3 Response 6 months later<br/>━━━━━━━━━━━━━━━━━━━━━<br/>subscription_licenses: A, B, C ✅<br/>licenses_by_catalog: {...} ✅<br/>license_schema_version: v3<br/><br/>Deprecated fields removed"]
     end
     
     subgraph "Client Compatibility"
@@ -533,7 +533,7 @@ graph TB
 ```mermaid
 graph LR
     subgraph "Without Index O(n) per course"
-        W1[Course Page Load] --> W2[Get subscriptionLicenses<br/>[A, B, C]]
+        W1[Course Page Load] --> W2["Get subscriptionLicenses<br/>A, B, C"]
         W2 --> W3[For Course X<br/>in Catalog-B]
         W3 --> W4[❌ Linear Scan<br/>Check A.catalog = B? No<br/>Check B.catalog = B? Yes ✓<br/>Check C.catalog = B? No]
         W4 --> W5[Found: License B]
@@ -548,7 +548,7 @@ graph LR
     end
     
     subgraph "With Index O(1) per course"
-        I1[Course Page Load] --> I2[Get licensesByCatalog<br/>{<br/>  'cat-A': [A],<br/>  'cat-B': [B],<br/>  'cat-C': [C]<br/>}]
+        I1[Course Page Load] --> I2["Get licensesByCatalog<br/>{<br/>  cat-A: A,<br/>  cat-B: B,<br/>  cat-C: C<br/>}"]
         I2 --> I3[For Course X<br/>in Catalog-B]
         I3 --> I4[✅ O1 Lookup<br/>licensesByCatalog['cat-B']<br/>= [B]]
         I4 --> I5[Found: License B]
