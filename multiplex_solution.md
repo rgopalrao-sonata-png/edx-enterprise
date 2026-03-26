@@ -491,13 +491,13 @@ gantt
 ```mermaid
 graph TB
     subgraph "API Response Evolution"
-        V1[v1 Response<br/>━━━━━━━━━━<br/>subscription_license: {...}<br/>subscription_plan: {...}<br/><br/>Single license only]
+        V1["v1 Response<br/>━━━━━━━━━━<br/>subscription_license: object<br/>subscription_plan: object<br/><br/>Single license only"]
         
-        V2["v2 Response Feature Flag OFF<br/>━━━━━━━━━━━━━━━━━━━━━<br/>subscription_licenses: A, B, C<br/>subscription_license: A ⚠️ COMPAT<br/>subscription_plan: {...} ⚠️ COMPAT<br/>license_schema_version: v1<br/><br/>Collection + legacy fields"]
+        V2["v2 Response Feature Flag OFF<br/>━━━━━━━━━━━━━━━━━━━━━<br/>subscription_licenses: A, B, C<br/>subscription_license: A ⚠️ COMPAT<br/>subscription_plan: object ⚠️ COMPAT<br/>license_schema_version: v1<br/><br/>Collection + legacy fields"]
         
-        V2Active["v2 Response Feature Flag ON<br/>━━━━━━━━━━━━━━━━━━━━━<br/>subscription_licenses: A, B, C ✅<br/>licenses_by_catalog: {...} ✅<br/>subscription_license: A ⚠️ COMPAT<br/>subscription_plan: {...} ⚠️ COMPAT<br/>license_schema_version: v2<br/><br/>Full multi-license support"]
+        V2Active["v2 Response Feature Flag ON<br/>━━━━━━━━━━━━━━━━━━━━━<br/>subscription_licenses: A, B, C ✅<br/>licenses_by_catalog: object ✅<br/>subscription_license: A ⚠️ COMPAT<br/>subscription_plan: object ⚠️ COMPAT<br/>license_schema_version: v2<br/><br/>Full multi-license support"]
         
-        V3["v3 Response 6 months later<br/>━━━━━━━━━━━━━━━━━━━━━<br/>subscription_licenses: A, B, C ✅<br/>licenses_by_catalog: {...} ✅<br/>license_schema_version: v3<br/><br/>Deprecated fields removed"]
+        V3["v3 Response 6 months later<br/>━━━━━━━━━━━━━━━━━━━━━<br/>subscription_licenses: A, B, C ✅<br/>licenses_by_catalog: object ✅<br/>license_schema_version: v3<br/><br/>Deprecated fields removed"]
     end
     
     subgraph "Client Compatibility"
