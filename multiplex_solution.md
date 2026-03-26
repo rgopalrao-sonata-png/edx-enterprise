@@ -78,7 +78,7 @@ graph TB
         P7[😞 Result<br/>Alice CANNOT access<br/>Technical Training course<br/>Even though she has License B!]
         
         P1 --> P2
-        P2 -->|[A, B, C]| P3
+        P2 -->|A, B, C| P3
         P3 -->|A only| P4
         P4 -->|A only| P5
         P5 -->|A only| P6
@@ -108,10 +108,10 @@ graph TB
         S7[😊 Result<br/>Alice CAN access<br/>Technical Training course<br/>Using License B!]
         
         S1 --> S2
-        S2 -->|[A, B, C]| S3
-        S3 -->|[A, B, C]| S4
-        S4 -->|[A, B, C]| S5
-        S5 -->|[A, B, C]| S6
+        S2 -->|A, B, C| S3
+        S3 -->|A, B, C| S4
+        S4 -->|A, B, C| S5
+        S5 -->|A, B, C| S6
         S6 --> S7
         
         style S3 fill:#51cf66,stroke:#2f9e44,color:#fff
@@ -383,12 +383,12 @@ graph TB
         UI[Course Page<br/>━━━━━━━━━━━━━━<br/>Display correct access<br/>based on applicable license]
     end
     
-    LM -->|[A, B, C]| BFF1
-    BFF1 -->|[A, B, C]| BFF2
-    BFF2 -->|[A, B, C]| BFF3
-    BFF3 -->|[A, B, C]| MFE1
-    MFE1 -->|[A, B, C]| MFE2
-    MFE2 -->|[A, B, C]| MFE3
+    LM -->|A, B, C| BFF1
+    BFF1 -->|A, B, C| BFF2
+    BFF2 -->|A, B, C| BFF3
+    BFF3 -->|A, B, C| MFE1
+    MFE1 -->|A, B, C| MFE2
+    MFE2 -->|A, B, C| MFE3
     MFE3 -->|Best match| UI
     
     style LM fill:#e3f2fd,stroke:#1976d2
@@ -654,7 +654,7 @@ graph TB
         C3[MFE<br/>Selects FIRST ❌]
         C4[Course Page<br/>Uses FIRST ❌]
         
-        C1 -->|[A,B,C]| C2
+        C1 -->|A,B,C| C2
         C2 -->|A only| C3
         C3 -->|A only| C4
     end
@@ -665,9 +665,9 @@ graph TB
         T3[MFE<br/>Receives ALL ✓]
         T4[Course Page<br/>Matches BEST ✓]
         
-        T1 -->|[A,B,C]| T2
-        T2 -->|[A,B,C]| T3
-        T3 -->|[A,B,C]| T4
+        T1 -->|A,B,C| T2
+        T2 -->|A,B,C| T3
+        T3 -->|A,B,C| T4
         T4 -->|Select B for<br/>catalog-B course| T4
     end
     
