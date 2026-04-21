@@ -11,11 +11,13 @@ from edx_rest_framework_extensions.auth.jwt.cookies import get_decoded_jwt
 from enterprise.constants import (
     DEFAULT_ENTERPRISE_ENROLLMENT_INTENTIONS_PERMISSION,
     DEFAULT_ENTERPRISE_ENROLLMENT_INTENTIONS_ROLE,
+    ENTERPRISE_ADMIN_ROLE,
     ENTERPRISE_CATALOG_ADMIN_ROLE,
     ENTERPRISE_CUSTOMER_PROVISIONING_ADMIN_ACCESS_PERMISSION,
     ENTERPRISE_DASHBOARD_ADMIN_ROLE,
     ENTERPRISE_ENROLLMENT_API_ADMIN_ROLE,
     ENTERPRISE_FULFILLMENT_OPERATOR_ROLE,
+    MANAGE_ENTERPRISE_CUSTOMER_ADMINS_PERMISSION,
     ENTERPRISE_REPORTING_CONFIG_ADMIN_ROLE,
     ENTERPRISE_SSO_ORCHESTRATOR_OPERATOR_ROLE,
     PENDING_ENT_CUSTOMER_ADMIN_PROVISIONING_ADMIN_ACCESS_PERMISSION,
@@ -77,6 +79,34 @@ def has_implicit_access_to_provisioning_pending_enterprise_customer_admin_users(
     return request_user_has_implicit_access_via_jwt(decoded_jwt,
                                                     PROVISIONING_PENDING_ENTERPRISE_CUSTOMER_ADMIN_ROLE,
                                                     obj)
+
+
+@rules.predicate
+def has_implicit_access_to_enterprise_admin(user, obj):  # pylint: disable=unused-argument
+    """
+    Check if a requesting user has the `ENTERPRISE_ADMIN_ROLE` system-wide role in their JWT.
+
+    Unlike feature roles (e.g. dashboard_admin), ENTERPRISE_ADMIN_ROLE is a system role key
+    in SYSTEM_TO_FEATURE_ROLE_MAPPING, not a feature role value. We therefore check the JWT
+    'roles' claim directly rather than going through the feature-role mapping utility.
+
+    Params:
+        user: An ``auth.User`` instance.
+        obj: The string version of an ``EnterpriseCustomer.uuid``.
+
+    Returns:
+        boolean: whether the request user has access or not
+    """
+    request = crum.get_current_request()
+    decoded_jwt = get_decoded_jwt(request) or get_decoded_jwt_from_auth(request)
+    if not decoded_jwt:
+        return False
+    context = str(obj) if obj else None
+    for role_data in decoded_jwt.get('roles', []):
+        role, _, ctx = role_data.partition(':')
+        if role == ENTERPRISE_ADMIN_ROLE and ctx in ('*', context):
+            return True
+    return False
 
 
 @rules.predicate
@@ -287,6 +317,12 @@ rules.add_perm(
 rules.add_perm(
     ENTERPRISE_CUSTOMER_PROVISIONING_ADMIN_ACCESS_PERMISSION,
     has_implicit_access_to_provisioning_enterprise_customers,
+)
+
+rules.add_perm(
+    MANAGE_ENTERPRISE_CUSTOMER_ADMINS_PERMISSION,
+    has_implicit_access_to_provisioning_enterprise_customers
+    | has_implicit_access_to_enterprise_admin,
 )
 
 rules.add_perm(
